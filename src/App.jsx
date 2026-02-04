@@ -22,903 +22,9 @@ const DEFAULT_IMAGES = {
 };
 
 // ============================================
-// DATABASE SERVICE (SQLite)
-// ============================================
-class DatabaseService {
-  constructor() {
-    this.db = null;
-    this.initialized = false;
-  }
-
-  async init() {
-    try {
-      // Check if SQLite is available (in browser environment)
-      if (typeof window !== "undefined" && window.sqlite) {
-        this.db = await window.sqlite.openDatabase({
-          name: "travel_blog.db",
-          version: "1.0",
-          displayName: "Travel Blog Database",
-          estimatedSize: 50 * 1024 * 1024, // 50MB
-        });
-
-        await this.createTables();
-        this.initialized = true;
-        console.log("Database initialized successfully");
-        return true;
-      } else {
-        // Fallback to localStorage if SQLite is not available
-        console.log("SQLite not available, using localStorage fallback");
-        return this.initLocalStorage();
-      }
-    } catch (error) {
-      console.error("Database initialization error:", error);
-      return this.initLocalStorage();
-    }
-  }
-
-  initLocalStorage() {
-    try {
-      // Create localStorage keys if they don't exist
-      if (!localStorage.getItem("krissane_stories")) {
-        localStorage.setItem("krissane_stories", JSON.stringify([]));
-      }
-      if (!localStorage.getItem("krissane_users")) {
-        localStorage.setItem("krissane_users", JSON.stringify([]));
-      }
-      if (!localStorage.getItem("krissane_likes")) {
-        localStorage.setItem("krissane_likes", JSON.stringify({}));
-      }
-      if (!localStorage.getItem("krissane_bookmarks")) {
-        localStorage.setItem("krissane_bookmarks", JSON.stringify({}));
-      }
-      this.initialized = true;
-      return true;
-    } catch (error) {
-      console.error("LocalStorage initialization error:", error);
-      return false;
-    }
-  }
-
-  async createTables() {
-    if (!this.db) return;
-
-    try {
-      // Stories table
-      await this.db.executeSql(`
-        CREATE TABLE IF NOT EXISTS stories (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          title TEXT NOT NULL,
-          excerpt TEXT,
-          content TEXT NOT NULL,
-          category TEXT,
-          location TEXT,
-          date TEXT,
-          readTime INTEGER,
-          coverImage TEXT,
-          images TEXT,
-          authorId TEXT,
-          authorName TEXT,
-          authorAvatar TEXT,
-          likes INTEGER DEFAULT 0,
-          views INTEGER DEFAULT 0,
-          createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
-
-      // Comments table
-      await this.db.executeSql(`
-        CREATE TABLE IF NOT EXISTS comments (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          storyId INTEGER,
-          author TEXT,
-          avatar TEXT,
-          text TEXT,
-          date TEXT,
-          userId TEXT,
-          createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-          FOREIGN KEY (storyId) REFERENCES stories (id) ON DELETE CASCADE
-        )
-      `);
-
-      // Users table
-      await this.db.executeSql(`
-        CREATE TABLE IF NOT EXISTS users (
-          id TEXT PRIMARY KEY,
-          name TEXT,
-          email TEXT,
-          picture TEXT,
-          isAdmin BOOLEAN DEFAULT 0,
-          createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
-
-      // Likes table
-      await this.db.executeSql(`
-        CREATE TABLE IF NOT EXISTS likes (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          storyId INTEGER,
-          userId TEXT,
-          createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-          UNIQUE(storyId, userId)
-        )
-      `);
-
-      // Bookmarks table
-      await this.db.executeSql(`
-        CREATE TABLE IF NOT EXISTS bookmarks (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          storyId INTEGER,
-          userId TEXT,
-          createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-          UNIQUE(storyId, userId)
-        )
-      `);
-
-      console.log("Tables created successfully");
-    } catch (error) {
-      console.error("Error creating tables:", error);
-    }
-  }
-
-  // ============================================
-  // STORIES OPERATIONS
-  // ============================================
-  async getAllStories() {
-    if (!this.initialized) await this.init();
-
-    if (this.db) {
-      try {
-        const result = await this.db.executeSql(
-          "SELECT * FROM stories ORDER BY createdAt DESC"
-        );
-        const stories = result.rows._array || [];
-
-        // Get comments for each story
-        for (const story of stories) {
-          const commentsResult = await this.db.executeSql(
-            "SELECT * FROM comments WHERE storyId = ? ORDER BY createdAt ASC",
-            [story.id]
-          );
-          story.comments = commentsResult.rows._array || [];
-
-          // Parse images if they're stored as JSON string
-          if (story.images) {
-            try {
-              story.images = JSON.parse(story.images);
-            } catch (e) {
-              story.images = [story.coverImage];
-            }
-          } else {
-            story.images = [story.coverImage];
-          }
-
-          // Get like count
-          const likesResult = await this.db.executeSql(
-            "SELECT COUNT(*) as count FROM likes WHERE storyId = ?",
-            [story.id]
-          );
-          story.likes = likesResult.rows._array[0]?.count || 0;
-        }
-
-        return stories;
-      } catch (error) {
-        console.error("Error getting stories from SQLite:", error);
-        return this.getStoriesFromLocalStorage();
-      }
-    } else {
-      return this.getStoriesFromLocalStorage();
-    }
-  }
-
-  async getStoryById(id) {
-    if (!this.initialized) await this.init();
-
-    if (this.db) {
-      try {
-        const result = await this.db.executeSql(
-          "SELECT * FROM stories WHERE id = ?",
-          [id]
-        );
-        const story = result.rows._array[0];
-
-        if (story) {
-          const commentsResult = await this.db.executeSql(
-            "SELECT * FROM comments WHERE storyId = ? ORDER BY createdAt ASC",
-            [id]
-          );
-          story.comments = commentsResult.rows._array || [];
-
-          if (story.images) {
-            try {
-              story.images = JSON.parse(story.images);
-            } catch (e) {
-              story.images = [story.coverImage];
-            }
-          } else {
-            story.images = [story.coverImage];
-          }
-
-          const likesResult = await this.db.executeSql(
-            "SELECT COUNT(*) as count FROM likes WHERE storyId = ?",
-            [id]
-          );
-          story.likes = likesResult.rows._array[0]?.count || 0;
-        }
-
-        return story;
-      } catch (error) {
-        console.error("Error getting story from SQLite:", error);
-        return this.getStoryFromLocalStorage(id);
-      }
-    } else {
-      return this.getStoryFromLocalStorage(id);
-    }
-  }
-
-  async saveStory(story) {
-    if (!this.initialized) await this.init();
-
-    const storyData = {
-      title: story.title,
-      excerpt: story.excerpt,
-      content: story.content,
-      category: story.category,
-      location: story.location,
-      date: story.date,
-      readTime: story.readTime,
-      coverImage: story.coverImage,
-      images: JSON.stringify(story.images || []),
-      authorId: story.author.id,
-      authorName: story.author.name,
-      authorAvatar: story.author.avatar,
-      likes: story.likes || 0,
-      views: story.views || 0,
-    };
-
-    if (this.db) {
-      try {
-        if (story.id) {
-          // Update existing story
-          await this.db.executeSql(
-            `UPDATE stories SET 
-              title = ?, excerpt = ?, content = ?, category = ?, location = ?, 
-              date = ?, readTime = ?, coverImage = ?, images = ?, 
-              authorId = ?, authorName = ?, authorAvatar = ?, likes = ?, views = ?
-            WHERE id = ?`,
-            [
-              storyData.title,
-              storyData.excerpt,
-              storyData.content,
-              storyData.category,
-              storyData.location,
-              storyData.date,
-              storyData.readTime,
-              storyData.coverImage,
-              storyData.images,
-              storyData.authorId,
-              storyData.authorName,
-              storyData.authorAvatar,
-              storyData.likes,
-              storyData.views,
-              story.id,
-            ]
-          );
-          return story.id;
-        } else {
-          // Insert new story
-          const result = await this.db.executeSql(
-            `INSERT INTO stories (
-              title, excerpt, content, category, location, date, readTime, 
-              coverImage, images, authorId, authorName, authorAvatar, likes, views
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [
-              storyData.title,
-              storyData.excerpt,
-              storyData.content,
-              storyData.category,
-              storyData.location,
-              storyData.date,
-              storyData.readTime,
-              storyData.coverImage,
-              storyData.images,
-              storyData.authorId,
-              storyData.authorName,
-              storyData.authorAvatar,
-              storyData.likes,
-              storyData.views,
-            ]
-          );
-          return result.insertId;
-        }
-      } catch (error) {
-        console.error("Error saving story to SQLite:", error);
-        return this.saveStoryToLocalStorage(story);
-      }
-    } else {
-      return this.saveStoryToLocalStorage(story);
-    }
-  }
-
-  async deleteStory(id) {
-    if (!this.initialized) await this.init();
-
-    if (this.db) {
-      try {
-        await this.db.executeSql("DELETE FROM comments WHERE storyId = ?", [
-          id,
-        ]);
-        await this.db.executeSql("DELETE FROM likes WHERE storyId = ?", [id]);
-        await this.db.executeSql("DELETE FROM bookmarks WHERE storyId = ?", [
-          id,
-        ]);
-        await this.db.executeSql("DELETE FROM stories WHERE id = ?", [id]);
-        return true;
-      } catch (error) {
-        console.error("Error deleting story from SQLite:", error);
-        return this.deleteStoryFromLocalStorage(id);
-      }
-    } else {
-      return this.deleteStoryFromLocalStorage(id);
-    }
-  }
-
-  // ============================================
-  // COMMENTS OPERATIONS
-  // ============================================
-  async addComment(storyId, comment) {
-    if (!this.initialized) await this.init();
-
-    if (this.db) {
-      try {
-        await this.db.executeSql(
-          `INSERT INTO comments (storyId, author, avatar, text, date, userId)
-           VALUES (?, ?, ?, ?, ?, ?)`,
-          [
-            storyId,
-            comment.author,
-            comment.avatar,
-            comment.text,
-            comment.date,
-            comment.userId,
-          ]
-        );
-        return true;
-      } catch (error) {
-        console.error("Error adding comment to SQLite:", error);
-        return this.addCommentToLocalStorage(storyId, comment);
-      }
-    } else {
-      return this.addCommentToLocalStorage(storyId, comment);
-    }
-  }
-
-  async deleteComment(commentId) {
-    if (!this.initialized) await this.init();
-
-    if (this.db) {
-      try {
-        await this.db.executeSql("DELETE FROM comments WHERE id = ?", [
-          commentId,
-        ]);
-        return true;
-      } catch (error) {
-        console.error("Error deleting comment from SQLite:", error);
-        return this.deleteCommentFromLocalStorage(commentId);
-      }
-    } else {
-      return this.deleteCommentFromLocalStorage(commentId);
-    }
-  }
-
-  // ============================================
-  // LIKES OPERATIONS
-  // ============================================
-  async toggleLike(storyId, userId) {
-    if (!this.initialized) await this.init();
-
-    if (this.db) {
-      try {
-        // Check if already liked
-        const checkResult = await this.db.executeSql(
-          "SELECT id FROM likes WHERE storyId = ? AND userId = ?",
-          [storyId, userId]
-        );
-
-        if (checkResult.rows._array.length > 0) {
-          // Unlike
-          await this.db.executeSql(
-            "DELETE FROM likes WHERE storyId = ? AND userId = ?",
-            [storyId, userId]
-          );
-          return false;
-        } else {
-          // Like
-          await this.db.executeSql(
-            "INSERT INTO likes (storyId, userId) VALUES (?, ?)",
-            [storyId, userId]
-          );
-          return true;
-        }
-      } catch (error) {
-        console.error("Error toggling like in SQLite:", error);
-        return this.toggleLikeInLocalStorage(storyId, userId);
-      }
-    } else {
-      return this.toggleLikeInLocalStorage(storyId, userId);
-    }
-  }
-
-  async getUserLikes(userId) {
-    if (!this.initialized) await this.init();
-
-    if (this.db) {
-      try {
-        const result = await this.db.executeSql(
-          "SELECT storyId FROM likes WHERE userId = ?",
-          [userId]
-        );
-        return new Set(result.rows._array.map((row) => row.storyId));
-      } catch (error) {
-        console.error("Error getting user likes from SQLite:", error);
-        return this.getUserLikesFromLocalStorage(userId);
-      }
-    } else {
-      return this.getUserLikesFromLocalStorage(userId);
-    }
-  }
-
-  // ============================================
-  // BOOKMARKS OPERATIONS
-  // ============================================
-  async toggleBookmark(storyId, userId) {
-    if (!this.initialized) await this.init();
-
-    if (this.db) {
-      try {
-        const checkResult = await this.db.executeSql(
-          "SELECT id FROM bookmarks WHERE storyId = ? AND userId = ?",
-          [storyId, userId]
-        );
-
-        if (checkResult.rows._array.length > 0) {
-          await this.db.executeSql(
-            "DELETE FROM bookmarks WHERE storyId = ? AND userId = ?",
-            [storyId, userId]
-          );
-          return false;
-        } else {
-          await this.db.executeSql(
-            "INSERT INTO bookmarks (storyId, userId) VALUES (?, ?)",
-            [storyId, userId]
-          );
-          return true;
-        }
-      } catch (error) {
-        console.error("Error toggling bookmark in SQLite:", error);
-        return this.toggleBookmarkInLocalStorage(storyId, userId);
-      }
-    } else {
-      return this.toggleBookmarkInLocalStorage(storyId, userId);
-    }
-  }
-
-  async getUserBookmarks(userId) {
-    if (!this.initialized) await this.init();
-
-    if (this.db) {
-      try {
-        const result = await this.db.executeSql(
-          "SELECT storyId FROM bookmarks WHERE userId = ?",
-          [userId]
-        );
-        return new Set(result.rows._array.map((row) => row.storyId));
-      } catch (error) {
-        console.error("Error getting user bookmarks from SQLite:", error);
-        return this.getUserBookmarksFromLocalStorage(userId);
-      }
-    } else {
-      return this.getUserBookmarksFromLocalStorage(userId);
-    }
-  }
-
-  // ============================================
-  // USERS OPERATIONS
-  // ============================================
-  async saveUser(user) {
-    if (!this.initialized) await this.init();
-
-    if (this.db) {
-      try {
-        await this.db.executeSql(
-          `INSERT OR REPLACE INTO users (id, name, email, picture, isAdmin)
-           VALUES (?, ?, ?, ?, ?)`,
-          [user.id, user.name, user.email, user.picture, user.isAdmin ? 1 : 0]
-        );
-        return true;
-      } catch (error) {
-        console.error("Error saving user to SQLite:", error);
-        return this.saveUserToLocalStorage(user);
-      }
-    } else {
-      return this.saveUserToLocalStorage(user);
-    }
-  }
-
-  async getUser(userId) {
-    if (!this.initialized) await this.init();
-
-    if (this.db) {
-      try {
-        const result = await this.db.executeSql(
-          "SELECT * FROM users WHERE id = ?",
-          [userId]
-        );
-        const user = result.rows._array[0];
-        if (user) {
-          user.isAdmin = Boolean(user.isAdmin);
-        }
-        return user;
-      } catch (error) {
-        console.error("Error getting user from SQLite:", error);
-        return this.getUserFromLocalStorage(userId);
-      }
-    } else {
-      return this.getUserFromLocalStorage(userId);
-    }
-  }
-
-  // ============================================
-  // LOCALSTORAGE FALLBACK METHODS
-  // ============================================
-  getStoriesFromLocalStorage() {
-    try {
-      const stories = JSON.parse(
-        localStorage.getItem("krissane_stories") || "[]"
-      );
-      return stories;
-    } catch (error) {
-      console.error("Error reading stories from localStorage:", error);
-      return [];
-    }
-  }
-
-  getStoryFromLocalStorage(id) {
-    try {
-      const stories = JSON.parse(
-        localStorage.getItem("krissane_stories") || "[]"
-      );
-      return stories.find((story) => story.id === id) || null;
-    } catch (error) {
-      console.error("Error reading story from localStorage:", error);
-      return null;
-    }
-  }
-
-  saveStoryToLocalStorage(story) {
-    try {
-      const stories = JSON.parse(
-        localStorage.getItem("krissane_stories") || "[]"
-      );
-
-      if (story.id) {
-        // Update existing story
-        const index = stories.findIndex((s) => s.id === story.id);
-        if (index !== -1) {
-          stories[index] = story;
-        }
-      } else {
-        // Add new story with auto-increment ID
-        const maxId =
-          stories.length > 0 ? Math.max(...stories.map((s) => s.id)) : 0;
-        story.id = maxId + 1;
-        stories.unshift(story);
-      }
-
-      localStorage.setItem("krissane_stories", JSON.stringify(stories));
-      return story.id;
-    } catch (error) {
-      console.error("Error saving story to localStorage:", error);
-      return null;
-    }
-  }
-
-  deleteStoryFromLocalStorage(id) {
-    try {
-      const stories = JSON.parse(
-        localStorage.getItem("krissane_stories") || "[]"
-      );
-      const filteredStories = stories.filter((story) => story.id !== id);
-      localStorage.setItem("krissane_stories", JSON.stringify(filteredStories));
-      return true;
-    } catch (error) {
-      console.error("Error deleting story from localStorage:", error);
-      return false;
-    }
-  }
-
-  addCommentToLocalStorage(storyId, comment) {
-    try {
-      const stories = JSON.parse(
-        localStorage.getItem("krissane_stories") || "[]"
-      );
-      const storyIndex = stories.findIndex((story) => story.id === storyId);
-
-      if (storyIndex !== -1) {
-        if (!stories[storyIndex].comments) {
-          stories[storyIndex].comments = [];
-        }
-
-        const maxId =
-          stories[storyIndex].comments.length > 0
-            ? Math.max(...stories[storyIndex].comments.map((c) => c.id))
-            : 0;
-        comment.id = maxId + 1;
-        stories[storyIndex].comments.push(comment);
-
-        localStorage.setItem("krissane_stories", JSON.stringify(stories));
-      }
-      return true;
-    } catch (error) {
-      console.error("Error adding comment to localStorage:", error);
-      return false;
-    }
-  }
-
-  deleteCommentFromLocalStorage(commentId) {
-    try {
-      const stories = JSON.parse(
-        localStorage.getItem("krissane_stories") || "[]"
-      );
-
-      for (let i = 0; i < stories.length; i++) {
-        if (stories[i].comments) {
-          const commentIndex = stories[i].comments.findIndex(
-            (c) => c.id === commentId
-          );
-          if (commentIndex !== -1) {
-            stories[i].comments.splice(commentIndex, 1);
-            localStorage.setItem("krissane_stories", JSON.stringify(stories));
-            return true;
-          }
-        }
-      }
-      return false;
-    } catch (error) {
-      console.error("Error deleting comment from localStorage:", error);
-      return false;
-    }
-  }
-
-  toggleLikeInLocalStorage(storyId, userId) {
-    try {
-      const stories = JSON.parse(
-        localStorage.getItem("krissane_stories") || "[]"
-      );
-      const storyIndex = stories.findIndex((story) => story.id === storyId);
-
-      if (storyIndex !== -1) {
-        if (!stories[storyIndex].likedBy) {
-          stories[storyIndex].likedBy = [];
-        }
-
-        const likeIndex = stories[storyIndex].likedBy.indexOf(userId);
-        if (likeIndex === -1) {
-          // Like
-          stories[storyIndex].likedBy.push(userId);
-          stories[storyIndex].likes = (stories[storyIndex].likes || 0) + 1;
-          localStorage.setItem("krissane_stories", JSON.stringify(stories));
-
-          // Update likes in separate storage
-          const userLikes = JSON.parse(
-            localStorage.getItem(`krissane_likes_${userId}`) || "[]"
-          );
-          if (!userLikes.includes(storyId)) {
-            userLikes.push(storyId);
-            localStorage.setItem(
-              `krissane_likes_${userId}`,
-              JSON.stringify(userLikes)
-            );
-          }
-          return true;
-        } else {
-          // Unlike
-          stories[storyIndex].likedBy.splice(likeIndex, 1);
-          stories[storyIndex].likes = Math.max(
-            0,
-            (stories[storyIndex].likes || 1) - 1
-          );
-          localStorage.setItem("krissane_stories", JSON.stringify(stories));
-
-          // Update likes in separate storage
-          const userLikes = JSON.parse(
-            localStorage.getItem(`krissane_likes_${userId}`) || "[]"
-          );
-          const updatedLikes = userLikes.filter((id) => id !== storyId);
-          localStorage.setItem(
-            `krissane_likes_${userId}`,
-            JSON.stringify(updatedLikes)
-          );
-          return false;
-        }
-      }
-      return false;
-    } catch (error) {
-      console.error("Error toggling like in localStorage:", error);
-      return false;
-    }
-  }
-
-  getUserLikesFromLocalStorage(userId) {
-    try {
-      const userLikes = JSON.parse(
-        localStorage.getItem(`krissane_likes_${userId}`) || "[]"
-      );
-      return new Set(userLikes);
-    } catch (error) {
-      console.error("Error getting user likes from localStorage:", error);
-      return new Set();
-    }
-  }
-
-  toggleBookmarkInLocalStorage(storyId, userId) {
-    try {
-      const bookmarks = JSON.parse(
-        localStorage.getItem(`krissane_bookmarks_${userId}`) || "[]"
-      );
-      const bookmarkIndex = bookmarks.indexOf(storyId);
-
-      if (bookmarkIndex === -1) {
-        // Add bookmark
-        bookmarks.push(storyId);
-        localStorage.setItem(
-          `krissane_bookmarks_${userId}`,
-          JSON.stringify(bookmarks)
-        );
-        return true;
-      } else {
-        // Remove bookmark
-        bookmarks.splice(bookmarkIndex, 1);
-        localStorage.setItem(
-          `krissane_bookmarks_${userId}`,
-          JSON.stringify(bookmarks)
-        );
-        return false;
-      }
-    } catch (error) {
-      console.error("Error toggling bookmark in localStorage:", error);
-      return false;
-    }
-  }
-
-  getUserBookmarksFromLocalStorage(userId) {
-    try {
-      const bookmarks = JSON.parse(
-        localStorage.getItem(`krissane_bookmarks_${userId}`) || "[]"
-      );
-      return new Set(bookmarks);
-    } catch (error) {
-      console.error("Error getting user bookmarks from localStorage:", error);
-      return new Set();
-    }
-  }
-
-  saveUserToLocalStorage(user) {
-    try {
-      const users = JSON.parse(localStorage.getItem("krissane_users") || "[]");
-      const existingIndex = users.findIndex((u) => u.id === user.id);
-
-      if (existingIndex !== -1) {
-        users[existingIndex] = user;
-      } else {
-        users.push(user);
-      }
-
-      localStorage.setItem("krissane_users", JSON.stringify(users));
-      return true;
-    } catch (error) {
-      console.error("Error saving user to localStorage:", error);
-      return false;
-    }
-  }
-
-  getUserFromLocalStorage(userId) {
-    try {
-      const users = JSON.parse(localStorage.getItem("krissane_users") || "[]");
-      return users.find((user) => user.id === userId) || null;
-    } catch (error) {
-      console.error("Error getting user from localStorage:", error);
-      return null;
-    }
-  }
-
-  // ============================================
-  // BACKUP & RESTORE
-  // ============================================
-  async exportData() {
-    if (!this.initialized) await this.init();
-
-    const data = {
-      stories: await this.getAllStories(),
-      users: this.db
-        ? (await this.db.executeSql("SELECT * FROM users")).rows._array
-        : JSON.parse(localStorage.getItem("krissane_users") || "[]"),
-      exportDate: new Date().toISOString(),
-    };
-
-    return JSON.stringify(data, null, 2);
-  }
-
-  async importData(jsonData) {
-    try {
-      const data = JSON.parse(jsonData);
-
-      if (data.stories && Array.isArray(data.stories)) {
-        for (const story of data.stories) {
-          await this.saveStory(story);
-        }
-      }
-
-      if (data.users && Array.isArray(data.users)) {
-        for (const user of data.users) {
-          await this.saveUser(user);
-        }
-      }
-
-      return true;
-    } catch (error) {
-      console.error("Error importing data:", error);
-      return false;
-    }
-  }
-
-  async clearAllData() {
-    if (!this.initialized) await this.init();
-
-    if (this.db) {
-      try {
-        await this.db.executeSql("DELETE FROM stories");
-        await this.db.executeSql("DELETE FROM comments");
-        await this.db.executeSql("DELETE FROM users");
-        await this.db.executeSql("DELETE FROM likes");
-        await this.db.executeSql("DELETE FROM bookmarks");
-        return true;
-      } catch (error) {
-        console.error("Error clearing database:", error);
-        return false;
-      }
-    } else {
-      try {
-        localStorage.removeItem("krissane_stories");
-        localStorage.removeItem("krissane_users");
-        localStorage.removeItem("krissane_likes");
-        localStorage.removeItem("krissane_bookmarks");
-        // Remove all user-specific like/bookmark keys
-        for (let i = 0; i < localStorage.length; i++) {
-          const key = localStorage.key(i);
-          if (
-            key.startsWith("krissane_likes_") ||
-            key.startsWith("krissane_bookmarks_")
-          ) {
-            localStorage.removeItem(key);
-          }
-        }
-        return true;
-      } catch (error) {
-        console.error("Error clearing localStorage:", error);
-        return false;
-      }
-    }
-  }
-}
-
-// Create global database instance
-const database = new DatabaseService();
-
-// ============================================
-// ICONS (Keep all your existing icons)
+// ICONS
 // ============================================
 const Icons = {
-  // ... (Keep all your existing icons exactly as they were)
   Plus: () => (
     <svg
       width="20"
@@ -946,7 +52,272 @@ const Icons = {
       <path d="M21 15l-5-5L5 21" />
     </svg>
   ),
-  // ... (Rest of icons remain exactly the same)
+  Images: () => (
+    <svg
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+    >
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <rect x="7" y="7" width="18" height="18" rx="2" opacity="0.5" />
+      <circle cx="10" cy="10" r="2" />
+      <path d="M21 15l-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
+    </svg>
+  ),
+  ArrowLeft: () => (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+    >
+      <line x1="19" y1="12" x2="5" y2="12" />
+      <polyline points="12 19 5 12 12 5" />
+    </svg>
+  ),
+  Trash: () => (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+    >
+      <polyline points="3 6 5 6 21 6" />
+      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+    </svg>
+  ),
+  Heart: ({ filled }) => (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill={filled ? "currentColor" : "none"}
+      stroke="currentColor"
+      strokeWidth="2"
+    >
+      <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
+    </svg>
+  ),
+  Clock: () => (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+    >
+      <circle cx="12" cy="12" r="10" />
+      <polyline points="12 6 12 12 16 14" />
+    </svg>
+  ),
+  X: () => (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+    >
+      <line x1="18" y1="6" x2="6" y2="18" />
+      <line x1="6" y1="6" x2="18" y2="18" />
+    </svg>
+  ),
+  Check: () => (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+    >
+      <polyline points="20 6 9 17 4 12" />
+    </svg>
+  ),
+  BookOpen: () => (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+    >
+      <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
+      <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
+    </svg>
+  ),
+  Send: () => (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+    >
+      <line x1="22" y1="2" x2="11" y2="13" />
+      <polygon points="22 2 15 22 11 13 2 9 22 2" />
+    </svg>
+  ),
+  Search: () => (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+    >
+      <circle cx="11" cy="11" r="8" />
+      <line x1="21" y1="21" x2="16.65" y2="16.65" />
+    </svg>
+  ),
+  Filter: () => (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+    >
+      <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+    </svg>
+  ),
+  MessageCircle: () => (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+    >
+      <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
+    </svg>
+  ),
+  User: () => (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+    >
+      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+      <circle cx="12" cy="7" r="4" />
+    </svg>
+  ),
+  Bookmark: ({ filled }) => (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill={filled ? "currentColor" : "none"}
+      stroke="currentColor"
+      strokeWidth="2"
+    >
+      <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
+    </svg>
+  ),
+  Share: () => (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+    >
+      <circle cx="18" cy="5" r="3" />
+      <circle cx="6" cy="12" r="3" />
+      <circle cx="18" cy="19" r="3" />
+      <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+      <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+    </svg>
+  ),
+  Grid: () => (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+    >
+      <rect x="3" y="3" width="7" height="7" />
+      <rect x="14" y="3" width="7" height="7" />
+      <rect x="14" y="14" width="7" height="7" />
+      <rect x="3" y="14" width="7" height="7" />
+    </svg>
+  ),
+  List: () => (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+    >
+      <line x1="8" y1="6" x2="21" y2="6" />
+      <line x1="8" y1="12" x2="21" y2="12" />
+      <line x1="8" y1="18" x2="21" y2="18" />
+      <line x1="3" y1="6" x2="3.01" y2="6" />
+      <line x1="3" y1="12" x2="3.01" y2="12" />
+      <line x1="3" y1="18" x2="3.01" y2="18" />
+    </svg>
+  ),
+  Shield: () => (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+    >
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+    </svg>
+  ),
+  Lock: () => (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+    >
+      <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+      <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+    </svg>
+  ),
+  LogOut: () => (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+    >
+      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+      <polyline points="16 17 21 12 16 7" />
+      <line x1="21" y1="12" x2="9" y2="12" />
+    </svg>
+  ),
   AlertTriangle: () => (
     <svg
       width="18"
@@ -961,6 +332,152 @@ const Icons = {
       <line x1="12" y1="17" x2="12.01" y2="17" />
     </svg>
   ),
+  Bell: () => (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+    >
+      <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+      <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+    </svg>
+  ),
+  ChevronDown: () => (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+    >
+      <polyline points="6 9 12 15 18 9" />
+    </svg>
+  ),
+  ChevronLeft: () => (
+    <svg
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+    >
+      <polyline points="15 18 9 12 15 6" />
+    </svg>
+  ),
+  ChevronRight: () => (
+    <svg
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+    >
+      <polyline points="9 18 15 12 9 6" />
+    </svg>
+  ),
+  Eye: () => (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+    >
+      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  ),
+  RefreshCw: () => (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+    >
+      <polyline points="23 4 23 10 17 10" />
+      <polyline points="1 20 1 14 7 14" />
+      <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+    </svg>
+  ),
+};
+
+// ============================================
+// SHARED STORAGE SERVICE (for public stories)
+// ============================================
+const SharedStorage = {
+  async get(key) {
+    try {
+      const result = await window.storage.get(key, true); // shared = true
+      return result ? JSON.parse(result.value) : null;
+    } catch {
+      return null;
+    }
+  },
+  async set(key, value) {
+    try {
+      await window.storage.set(key, JSON.stringify(value), true); // shared = true
+      return true;
+    } catch (e) {
+      console.error("Shared storage error:", e);
+      return false;
+    }
+  },
+  async delete(key) {
+    try {
+      await window.storage.delete(key, true); // shared = true
+      return true;
+    } catch {
+      return false;
+    }
+  },
+  async list(prefix) {
+    try {
+      const result = await window.storage.list(prefix, true); // shared = true
+      return result?.keys || [];
+    } catch {
+      return [];
+    }
+  },
+};
+
+// ============================================
+// PERSONAL STORAGE SERVICE (for user-specific data)
+// ============================================
+const PersonalStorage = {
+  async get(key) {
+    try {
+      const result = await window.storage.get(key, false); // shared = false (personal)
+      return result ? JSON.parse(result.value) : null;
+    } catch {
+      return null;
+    }
+  },
+  async set(key, value) {
+    try {
+      await window.storage.set(key, JSON.stringify(value), false); // shared = false
+      return true;
+    } catch (e) {
+      console.error("Personal storage error:", e);
+      return false;
+    }
+  },
+  async delete(key) {
+    try {
+      await window.storage.delete(key, false);
+      return true;
+    } catch {
+      return false;
+    }
+  },
 };
 
 // ============================================
@@ -1062,10 +579,8 @@ const categories = [
 ];
 
 // ============================================
-// COMPONENTS (Keep all your existing components)
+// USER AVATAR COMPONENT
 // ============================================
-
-// UserAvatar component (keep as is)
 const UserAvatar = ({ user, size = 32, showName = false, onClick }) => (
   <div
     style={{
@@ -1083,7 +598,9 @@ const UserAvatar = ({ user, size = 32, showName = false, onClick }) => (
   </div>
 );
 
-// NotificationCenter component (keep as is)
+// ============================================
+// NOTIFICATION CENTER COMPONENT
+// ============================================
 const NotificationCenter = ({
   notifications,
   onClear,
@@ -1146,7 +663,9 @@ const NotificationCenter = ({
   );
 };
 
-// ImageCarousel component (keep as is)
+// ============================================
+// IMAGE CAROUSEL COMPONENT
+// ============================================
 const ImageCarousel = ({ images, onClose }) => {
   const [currentIndex, setCurrentIndex] = useState(0);
 
@@ -1217,7 +736,9 @@ const ImageCarousel = ({ images, onClose }) => {
   );
 };
 
-// CommentModal component (keep as is)
+// ============================================
+// COMMENT MODAL COMPONENT
+// ============================================
 const CommentModal = ({
   isOpen,
   onClose,
@@ -1371,7 +892,9 @@ const CommentModal = ({
   );
 };
 
-// MultiImageUpload component (keep as is)
+// ============================================
+// MULTI-IMAGE UPLOAD COMPONENT
+// ============================================
 const MultiImageUpload = ({ images, onImagesChange, maxImages = 5 }) => {
   const fileInputRef = useRef(null);
 
@@ -1466,7 +989,9 @@ const MultiImageUpload = ({ images, onImagesChange, maxImages = 5 }) => {
   );
 };
 
-// StoryCard component (keep as is)
+// ============================================
+// STORY CARD COMPONENT
+// ============================================
 const StoryCard = ({
   story,
   index,
@@ -1624,7 +1149,9 @@ const StoryCard = ({
   );
 };
 
-// GoogleAuthModal component (keep as is)
+// ============================================
+// GOOGLE AUTH MODAL COMPONENT
+// ============================================
 const GoogleAuthModal = ({
   isOpen,
   onClose,
@@ -1889,271 +1416,6 @@ const GoogleAuthModal = ({
 };
 
 // ============================================
-// DATABASE MANAGEMENT MODAL
-// ============================================
-const DatabaseManager = ({ isOpen, onClose, toast }) => {
-  const [isExporting, setIsExporting] = useState(false);
-  const [isImporting, setIsImporting] = useState(false);
-  const [isClearing, setIsClearing] = useState(false);
-  const [importData, setImportData] = useState("");
-  const [stats, setStats] = useState({
-    stories: 0,
-    users: 0,
-    comments: 0,
-    likes: 0,
-    bookmarks: 0,
-  });
-
-  useEffect(() => {
-    if (isOpen) {
-      loadStats();
-    }
-  }, [isOpen]);
-
-  const loadStats = async () => {
-    try {
-      const stories = await database.getAllStories();
-      const storyCount = stories.length;
-      const commentCount = stories.reduce(
-        (sum, story) => sum + (story.comments?.length || 0),
-        0
-      );
-      const likeCount = stories.reduce(
-        (sum, story) => sum + (story.likes || 0),
-        0
-      );
-
-      let userCount = 0;
-      let bookmarkCount = 0;
-
-      if (database.db) {
-        const usersResult = await database.db.executeSql(
-          "SELECT COUNT(*) as count FROM users"
-        );
-        userCount = usersResult.rows._array[0]?.count || 0;
-
-        const bookmarksResult = await database.db.executeSql(
-          "SELECT COUNT(*) as count FROM bookmarks"
-        );
-        bookmarkCount = bookmarksResult.rows._array[0]?.count || 0;
-      } else {
-        const users = JSON.parse(
-          localStorage.getItem("krissane_users") || "[]"
-        );
-        userCount = users.length;
-
-        // Count bookmarks from localStorage
-        let totalBookmarks = 0;
-        for (let i = 0; i < localStorage.length; i++) {
-          const key = localStorage.key(i);
-          if (key.startsWith("krissane_bookmarks_")) {
-            const bookmarks = JSON.parse(localStorage.getItem(key) || "[]");
-            totalBookmarks += bookmarks.length;
-          }
-        }
-        bookmarkCount = totalBookmarks;
-      }
-
-      setStats({
-        stories: storyCount,
-        users: userCount,
-        comments: commentCount,
-        likes: likeCount,
-        bookmarks: bookmarkCount,
-      });
-    } catch (error) {
-      console.error("Error loading stats:", error);
-    }
-  };
-
-  const handleExport = async () => {
-    setIsExporting(true);
-    try {
-      const data = await database.exportData();
-      const blob = new Blob([data], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `travel-blog-backup-${
-        new Date().toISOString().split("T")[0]
-      }.json`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      toast("Data exported successfully!", "success");
-    } catch (error) {
-      console.error("Export error:", error);
-      toast("Export failed", "error");
-    } finally {
-      setIsExporting(false);
-    }
-  };
-
-  const handleImport = async () => {
-    if (!importData.trim()) {
-      toast("Please paste JSON data to import", "error");
-      return;
-    }
-
-    setIsImporting(true);
-    try {
-      const success = await database.importData(importData);
-      if (success) {
-        toast("Data imported successfully!", "success");
-        setImportData("");
-        loadStats();
-        onClose();
-      } else {
-        toast("Import failed", "error");
-      }
-    } catch (error) {
-      console.error("Import error:", error);
-      toast("Invalid JSON data", "error");
-    } finally {
-      setIsImporting(false);
-    }
-  };
-
-  const handleClearAll = async () => {
-    if (
-      !window.confirm(
-        "Are you sure you want to clear ALL data? This cannot be undone!"
-      )
-    ) {
-      return;
-    }
-
-    setIsClearing(true);
-    try {
-      const success = await database.clearAllData();
-      if (success) {
-        toast("All data cleared successfully!", "success");
-        loadStats();
-        onClose();
-      } else {
-        toast("Failed to clear data", "error");
-      }
-    } catch (error) {
-      console.error("Clear error:", error);
-      toast("Clear failed", "error");
-    } finally {
-      setIsClearing(false);
-    }
-  };
-
-  if (!isOpen) return null;
-
-  return (
-    <div style={styles.modalOverlay} onClick={onClose}>
-      <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
-        <div style={styles.modalHeader}>
-          <h3 style={styles.modalTitle}>
-            <Icons.Database /> Database Management
-          </h3>
-          <button onClick={onClose} style={styles.modalCloseBtn}>
-            <Icons.X />
-          </button>
-        </div>
-
-        <div style={styles.statsGrid}>
-          <div style={styles.statCard}>
-            <div style={styles.statNumber}>{stats.stories}</div>
-            <div style={styles.statLabel}>Stories</div>
-          </div>
-          <div style={styles.statCard}>
-            <div style={styles.statNumber}>{stats.users}</div>
-            <div style={styles.statLabel}>Users</div>
-          </div>
-          <div style={styles.statCard}>
-            <div style={styles.statNumber}>{stats.comments}</div>
-            <div style={styles.statLabel}>Comments</div>
-          </div>
-          <div style={styles.statCard}>
-            <div style={styles.statNumber}>{stats.likes}</div>
-            <div style={styles.statLabel}>Likes</div>
-          </div>
-          <div style={styles.statCard}>
-            <div style={styles.statNumber}>{stats.bookmarks}</div>
-            <div style={styles.statLabel}>Bookmarks</div>
-          </div>
-        </div>
-
-        <div style={styles.section}>
-          <h4 style={styles.sectionTitle}>Backup & Restore</h4>
-          <p style={styles.sectionDesc}>
-            Export your data for safekeeping or import from a previous backup.
-          </p>
-
-          <div style={styles.buttonGroup}>
-            <button
-              onClick={handleExport}
-              disabled={isExporting}
-              style={styles.exportBtn}
-            >
-              {isExporting ? "Exporting..." : "Export All Data"}
-            </button>
-          </div>
-
-          <div style={styles.importSection}>
-            <textarea
-              placeholder="Paste JSON backup data here..."
-              value={importData}
-              onChange={(e) => setImportData(e.target.value)}
-              style={styles.importTextarea}
-              rows={6}
-            />
-            <button
-              onClick={handleImport}
-              disabled={isImporting || !importData.trim()}
-              style={styles.importBtn}
-            >
-              {isImporting ? "Importing..." : "Import Data"}
-            </button>
-          </div>
-        </div>
-
-        <div style={styles.section}>
-          <h4 style={styles.sectionTitle}>Danger Zone</h4>
-          <p style={styles.dangerText}>
-            Warning: This will permanently delete all data including stories,
-            users, comments, likes, and bookmarks.
-          </p>
-          <button
-            onClick={handleClearAll}
-            disabled={isClearing}
-            style={styles.clearAllBtn}
-          >
-            {isClearing ? "Clearing..." : "Clear All Data"}
-          </button>
-        </div>
-
-        <div style={styles.footerNote}>
-          <Icons.AlertTriangle />
-          <span>Backup your data regularly to prevent data loss.</span>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// Add Database icon to Icons object
-Icons.Database = () => (
-  <svg
-    width="18"
-    height="18"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-  >
-    <ellipse cx="12" cy="5" rx="9" ry="3" />
-    <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" />
-    <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" />
-  </svg>
-);
-
-// ============================================
 // MAIN APP COMPONENT
 // ============================================
 export default function TravelBlog() {
@@ -2182,7 +1444,6 @@ export default function TravelBlog() {
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [showAdminLogin, setShowAdminLogin] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(null);
-  const [showDatabaseManager, setShowDatabaseManager] = useState(false);
 
   // Filter state
   const [searchQuery, setSearchQuery] = useState("");
@@ -2212,66 +1473,51 @@ export default function TravelBlog() {
   }, []);
 
   // ============================================
-  // LOAD DATA FROM DATABASE
+  // LOAD DATA FROM SHARED STORAGE
   // ============================================
   const loadStories = useCallback(async () => {
     try {
-      setIsLoading(true);
-
-      // Initialize database
-      await database.init();
-
-      // Load stories from database
-      const loadedStories = await database.getAllStories();
-
-      if (loadedStories && loadedStories.length > 0) {
-        console.log(`Loaded ${loadedStories.length} stories from database`);
-        setStories(loadedStories);
+      const storedStories = await SharedStorage.get("krissane-stories");
+      if (
+        storedStories &&
+        Array.isArray(storedStories) &&
+        storedStories.length > 0
+      ) {
+        setStories(storedStories);
       } else {
-        // If no stories exist, initialize with sample stories
-        console.log("No stories found, initializing with sample data");
-
-        // Save sample stories to database
-        for (const story of sampleStories) {
-          await database.saveStory(story);
-        }
-
-        // Reload stories
-        const newStories = await database.getAllStories();
-        setStories(newStories);
+        // Initialize with sample stories if none exist
+        await SharedStorage.set("krissane-stories", sampleStories);
+        setStories(sampleStories);
       }
     } catch (error) {
       console.error("Error loading stories:", error);
-      // Fallback to sample stories
       setStories(sampleStories);
-    } finally {
-      setIsLoading(false);
     }
   }, []);
 
   const loadPersonalData = useCallback(async () => {
     try {
-      if (user) {
-        const [likes, bookmarks, notifs, savedAdmin] = await Promise.all([
-          database.getUserLikes(user.id),
-          database.getUserBookmarks(user.id),
+      const [likes, bookmarks, notifs, savedUser, savedAdmin] =
+        await Promise.all([
+          PersonalStorage.get("krissane-likes"),
+          PersonalStorage.get("krissane-bookmarks"),
           PersonalStorage.get("krissane-notifications"),
+          PersonalStorage.get("krissane-user"),
           PersonalStorage.get("krissane-admin"),
         ]);
 
-        if (likes) setLikedStories(likes);
-        if (bookmarks) setBookmarkedStories(bookmarks);
-        if (notifs) setNotifications(notifs);
-        if (savedAdmin) setIsAdmin(true);
-      } else {
-        // Load notifications for guest users
-        const notifs = await PersonalStorage.get("krissane-notifications");
-        if (notifs) setNotifications(notifs);
+      if (likes) setLikedStories(new Set(likes));
+      if (bookmarks) setBookmarkedStories(new Set(bookmarks));
+      if (notifs) setNotifications(notifs);
+      if (savedUser) {
+        setUser(savedUser);
+        if (savedUser.isAdmin) setIsAdmin(true);
       }
+      if (savedAdmin) setIsAdmin(true);
     } catch (error) {
       console.error("Error loading personal data:", error);
     }
-  }, [user]);
+  }, []);
 
   useEffect(() => {
     const loadData = async () => {
@@ -2282,45 +1528,56 @@ export default function TravelBlog() {
     loadData();
   }, [loadStories, loadPersonalData]);
 
-  // Refresh stories from database
+  // Refresh stories from shared storage
   const refreshStories = useCallback(async () => {
     setIsRefreshing(true);
-    try {
-      const loadedStories = await database.getAllStories();
-      setStories(loadedStories);
-      toast(`Refreshed! Loaded ${loadedStories.length} stories`);
-    } catch (error) {
-      console.error("Error refreshing stories:", error);
-      toast("Refresh failed, using cached stories", "error");
-    } finally {
-      setIsRefreshing(false);
+    await loadStories();
+    setIsRefreshing(false);
+    toast("Stories refreshed!");
+  }, [loadStories, toast]);
+
+  // Save stories to shared storage when changed
+  useEffect(() => {
+    if (!isLoading && stories.length > 0) {
+      SharedStorage.set("krissane-stories", stories);
     }
-  }, [toast]);
+  }, [stories, isLoading]);
+
+  // Save personal data when changed
+  useEffect(() => {
+    if (!isLoading) {
+      PersonalStorage.set("krissane-likes", Array.from(likedStories));
+    }
+  }, [likedStories, isLoading]);
+
+  useEffect(() => {
+    if (!isLoading) {
+      PersonalStorage.set("krissane-bookmarks", Array.from(bookmarkedStories));
+    }
+  }, [bookmarkedStories, isLoading]);
+
+  useEffect(() => {
+    if (!isLoading) {
+      PersonalStorage.set("krissane-notifications", notifications);
+    }
+  }, [notifications, isLoading]);
 
   // ============================================
   // NOTIFICATIONS
   // ============================================
-  const addNotification = useCallback(
-    (message, data = {}) => {
-      const notif = {
-        id: Date.now(),
-        message,
-        time: "Just now",
-        read: false,
-        ...data,
-      };
-      setNotifications((prev) => [notif, ...prev.slice(0, 19)]);
-      PersonalStorage.set("krissane-notifications", [
-        notif,
-        ...notifications.slice(0, 19),
-      ]);
-    },
-    [notifications]
-  );
+  const addNotification = useCallback((message, data = {}) => {
+    const notif = {
+      id: Date.now(),
+      message,
+      time: "Just now",
+      read: false,
+      ...data,
+    };
+    setNotifications((prev) => [notif, ...prev.slice(0, 19)]);
+  }, []);
 
   const clearNotifications = () => {
     setNotifications([]);
-    PersonalStorage.set("krissane-notifications", []);
     toast("Notifications cleared");
   };
 
@@ -2329,23 +1586,15 @@ export default function TravelBlog() {
   // ============================================
   const handleLogin = async (userData) => {
     setUser(userData);
-    await database.saveUser(userData);
     if (userData.isAdmin) setIsAdmin(true);
-
-    // Load user-specific data
-    const likes = await database.getUserLikes(userData.id);
-    const bookmarks = await database.getUserBookmarks(userData.id);
-    if (likes) setLikedStories(likes);
-    if (bookmarks) setBookmarkedStories(bookmarks);
-
+    await PersonalStorage.set("krissane-user", userData);
     toast(`Welcome, ${userData.name}! 👋`);
     setShowAuthModal(false);
   };
 
   const handleLogout = async () => {
     setUser(null);
-    setLikedStories(new Set());
-    setBookmarkedStories(new Set());
+    await PersonalStorage.delete("krissane-user");
     toast("Signed out successfully");
   };
 
@@ -2429,59 +1678,40 @@ export default function TravelBlog() {
       comments: [],
     };
 
-    try {
-      // Save to database
-      const storyId = await database.saveStory(story);
-      story.id = storyId || story.id;
+    // Add to local state and save to shared storage
+    const updatedStories = [story, ...stories];
+    setStories(updatedStories);
+    await SharedStorage.set("krissane-stories", updatedStories);
 
-      // Update local state
-      setStories((prev) => [story, ...prev]);
+    addNotification(`New story: "${story.title}" by ${story.author.name}`, {
+      avatar: story.author.avatar,
+      storyId: story.id,
+    });
 
-      // Add notification
-      addNotification(`New story: "${story.title}" by ${story.author.name}`, {
-        avatar: story.author.avatar,
-        storyId: story.id,
-      });
-
-      // Reset form
-      setNewStory({
-        title: "",
-        excerpt: "",
-        content: "",
-        category: "",
-        location: "",
-        images: [],
-      });
-
-      setCurrentPage("home");
-      toast("Story published! 🎉 Everyone can see it now!");
-    } catch (error) {
-      console.error("Error creating story:", error);
-      toast("Failed to save story", "error");
-    }
+    setNewStory({
+      title: "",
+      excerpt: "",
+      content: "",
+      category: "",
+      location: "",
+      images: [],
+    });
+    setCurrentPage("home");
+    toast("Story published! 🎉 Everyone can see it now!");
   };
 
   const handleDeleteStory = async (storyId) => {
-    try {
-      const success = await database.deleteStory(storyId);
-      if (success) {
-        const updatedStories = stories.filter((s) => s.id !== storyId);
-        setStories(updatedStories);
-        setSelectedStory(null);
-        setShowDeleteConfirm(null);
-        setCurrentPage("home");
-        toast("Story deleted");
-      } else {
-        toast("Failed to delete story", "error");
-      }
-    } catch (error) {
-      console.error("Error deleting story:", error);
-      toast("Failed to delete story", "error");
-    }
+    const updatedStories = stories.filter((s) => s.id !== storyId);
+    setStories(updatedStories);
+    await SharedStorage.set("krissane-stories", updatedStories);
+    setSelectedStory(null);
+    setShowDeleteConfirm(null);
+    setCurrentPage("home");
+    toast("Story deleted");
   };
 
   // ============================================
-  // LIKES
+  // LIKES - Shared across all users
   // ============================================
   const handleLike = useCallback(
     async (storyId) => {
@@ -2490,86 +1720,73 @@ export default function TravelBlog() {
         return;
       }
 
-      try {
-        const liked = await database.toggleLike(storyId, user.id);
+      const isLiked = likedStories.has(storyId);
 
-        // Update local state
-        setLikedStories((prev) => {
-          const newSet = new Set(prev);
-          liked ? newSet.add(storyId) : newSet.delete(storyId);
-          return newSet;
-        });
+      // Update personal likes
+      setLikedStories((prev) => {
+        const newSet = new Set(prev);
+        isLiked ? newSet.delete(storyId) : newSet.add(storyId);
+        return newSet;
+      });
 
-        // Update story in local state
-        setStories((prev) =>
-          prev.map((s) =>
-            s.id === storyId
-              ? {
-                  ...s,
-                  likes: liked
-                    ? (s.likes || 0) + 1
-                    : Math.max(0, (s.likes || 1) - 1),
-                }
-              : s
-          )
-        );
+      // Update story likes count in shared storage
+      const updatedStories = stories.map((s) =>
+        s.id === storyId
+          ? {
+              ...s,
+              likes: isLiked ? Math.max(0, s.likes - 1) : s.likes + 1,
+              likedBy: isLiked
+                ? (s.likedBy || []).filter((id) => id !== user.id)
+                : [...(s.likedBy || []), user.id],
+            }
+          : s
+      );
 
-        if (selectedStory?.id === storyId) {
-          setSelectedStory((prev) => ({
-            ...prev,
-            likes: liked
-              ? (prev.likes || 0) + 1
-              : Math.max(0, (prev.likes || 1) - 1),
-          }));
+      setStories(updatedStories);
+      await SharedStorage.set("krissane-stories", updatedStories);
+
+      if (selectedStory?.id === storyId) {
+        setSelectedStory((prev) => ({
+          ...prev,
+          likes: isLiked ? Math.max(0, prev.likes - 1) : prev.likes + 1,
+        }));
+      }
+
+      if (!isLiked) {
+        const story = stories.find((s) => s.id === storyId);
+        if (story && story.author.id !== user.id) {
+          addNotification(`${user.name} liked "${story.title}"`, {
+            avatar: user.picture,
+            storyId,
+          });
         }
-
-        if (liked) {
-          const story = stories.find((s) => s.id === storyId);
-          if (story && story.author.id !== user.id) {
-            addNotification(`${user.name} liked "${story.title}"`, {
-              avatar: user.picture,
-              storyId,
-            });
-          }
-        }
-      } catch (error) {
-        console.error("Error toggling like:", error);
-        toast("Failed to update like", "error");
       }
     },
-    [user, stories, selectedStory, toast, addNotification]
+    [user, likedStories, stories, selectedStory, toast, addNotification]
   );
 
   // ============================================
-  // BOOKMARKS
+  // BOOKMARKS (Personal)
   // ============================================
   const handleBookmark = useCallback(
-    async (storyId) => {
-      if (!user) {
-        toast("Please sign in to bookmark stories", "error");
-        return;
-      }
-
-      try {
-        const bookmarked = await database.toggleBookmark(storyId, user.id);
-
-        setBookmarkedStories((prev) => {
-          const newSet = new Set(prev);
-          bookmarked ? newSet.add(storyId) : newSet.delete(storyId);
-          return newSet;
-        });
-
-        toast(bookmarked ? "Added to bookmarks" : "Removed from bookmarks");
-      } catch (error) {
-        console.error("Error toggling bookmark:", error);
-        toast("Failed to update bookmark", "error");
-      }
+    (storyId) => {
+      setBookmarkedStories((prev) => {
+        const newSet = new Set(prev);
+        if (newSet.has(storyId)) {
+          newSet.delete(storyId);
+          toast("Removed from bookmarks");
+        } else {
+          newSet.add(storyId);
+          toast("Added to bookmarks");
+        }
+        return newSet;
+      });
     },
-    [user, toast]
+    [toast]
   );
 
   // ============================================
-  // COMMENTS
+  // COMMENTS - Shared across all users
   // ============================================
   const openCommentModal = (story) => {
     setCommentModalStory(story);
@@ -2578,7 +1795,6 @@ export default function TravelBlog() {
 
   const handleAddComment = async (text) => {
     if (!user || !commentModalStory) return;
-
     const comment = {
       id: Date.now(),
       author: user.name,
@@ -2588,68 +1804,49 @@ export default function TravelBlog() {
       userId: user.id,
     };
 
-    try {
-      const success = await database.addComment(commentModalStory.id, comment);
+    const updatedStories = stories.map((s) =>
+      s.id === commentModalStory.id
+        ? { ...s, comments: [...(s.comments || []), comment] }
+        : s
+    );
 
-      if (success) {
-        // Update local state
-        const updatedStories = stories.map((s) =>
-          s.id === commentModalStory.id
-            ? { ...s, comments: [...(s.comments || []), comment] }
-            : s
-        );
+    setStories(updatedStories);
+    await SharedStorage.set("krissane-stories", updatedStories);
 
-        setStories(updatedStories);
-        setCommentModalStory((prev) => ({
-          ...prev,
-          comments: [...(prev.comments || []), comment],
-        }));
+    setCommentModalStory((prev) => ({
+      ...prev,
+      comments: [...(prev.comments || []), comment],
+    }));
 
-        if (commentModalStory.author.id !== user.id) {
-          addNotification(
-            `${user.name} commented on "${commentModalStory.title}"`,
-            {
-              avatar: user.picture,
-              storyId: commentModalStory.id,
-            }
-          );
+    if (commentModalStory.author.id !== user.id) {
+      addNotification(
+        `${user.name} commented on "${commentModalStory.title}"`,
+        {
+          avatar: user.picture,
+          storyId: commentModalStory.id,
         }
-        toast("Comment added!");
-      } else {
-        toast("Failed to add comment", "error");
-      }
-    } catch (error) {
-      console.error("Error adding comment:", error);
-      toast("Failed to add comment", "error");
+      );
     }
+    toast("Comment added!");
   };
 
   const handleDeleteComment = async (commentId) => {
     if (!commentModalStory) return;
 
-    try {
-      const success = await database.deleteComment(commentId);
+    const updatedStories = stories.map((s) =>
+      s.id === commentModalStory.id
+        ? { ...s, comments: s.comments.filter((c) => c.id !== commentId) }
+        : s
+    );
 
-      if (success) {
-        const updatedStories = stories.map((s) =>
-          s.id === commentModalStory.id
-            ? { ...s, comments: s.comments.filter((c) => c.id !== commentId) }
-            : s
-        );
+    setStories(updatedStories);
+    await SharedStorage.set("krissane-stories", updatedStories);
 
-        setStories(updatedStories);
-        setCommentModalStory((prev) => ({
-          ...prev,
-          comments: prev.comments.filter((c) => c.id !== commentId),
-        }));
-        toast("Comment deleted");
-      } else {
-        toast("Failed to delete comment", "error");
-      }
-    } catch (error) {
-      console.error("Error deleting comment:", error);
-      toast("Failed to delete comment", "error");
-    }
+    setCommentModalStory((prev) => ({
+      ...prev,
+      comments: prev.comments.filter((c) => c.id !== commentId),
+    }));
+    toast("Comment deleted");
   };
 
   // ============================================
@@ -2792,12 +1989,6 @@ export default function TravelBlog() {
         likedStories={likedStories}
       />
 
-      <DatabaseManager
-        isOpen={showDatabaseManager}
-        onClose={() => setShowDatabaseManager(false)}
-        toast={toast}
-      />
-
       <nav style={styles.nav}>
         <div style={styles.logo} onClick={() => setCurrentPage("home")}>
           Krissane<span style={styles.logoAccent}>.</span>
@@ -2848,16 +2039,6 @@ export default function TravelBlog() {
           >
             <Icons.RefreshCw />
           </button>
-
-          {isAdmin && (
-            <button
-              onClick={() => setShowDatabaseManager(true)}
-              style={styles.databaseBtn}
-              title="Database Management"
-            >
-              <Icons.Database />
-            </button>
-          )}
 
           <NotificationCenter
             notifications={notifications}
@@ -2914,22 +2095,11 @@ export default function TravelBlog() {
       {isAdmin && (
         <div style={styles.adminBanner}>
           <Icons.Shield /> Admin Mode — You can manage all posts and comments
-          <button
-            onClick={() => setShowDatabaseManager(true)}
-            style={styles.databaseLinkBtn}
-          >
-            <Icons.Database /> Manage Database
-          </button>
         </div>
       )}
 
       <div style={styles.publicBanner}>
         <Icons.Eye /> Public Stories — All posts are visible to everyone
-        {database.db ? (
-          <span style={styles.dbStatus}>SQLite Database Active</span>
-        ) : (
-          <span style={styles.dbStatusFallback}>LocalStorage Fallback</span>
-        )}
       </div>
 
       <main style={styles.main}>
@@ -3419,18 +2589,10 @@ export default function TravelBlog() {
             <a href="#" onClick={() => setCurrentPage("bookmarks")}>
               Bookmarks
             </a>
-            {isAdmin && (
-              <a href="#" onClick={() => setShowDatabaseManager(true)}>
-                Database
-              </a>
-            )}
           </div>
         </div>
         <div style={styles.footerBottom}>
           © 2026 Krissane Adventures. All rights reserved.
-          <span style={styles.dbInfo}>
-            {database.db ? "SQLite Database" : "LocalStorage"}
-          </span>
         </div>
       </footer>
     </div>
@@ -3438,178 +2600,9 @@ export default function TravelBlog() {
 }
 
 // ============================================
-// ADDITIONAL STYLES FOR DATABASE MANAGER
-// ============================================
-const additionalStyles = {
-  // Add these to your existing styles object
-  databaseBtn: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    padding: "10px",
-    background: "#f5f5f5",
-    color: "#666",
-    border: "none",
-    borderRadius: "8px",
-    cursor: "pointer",
-  },
-  databaseLinkBtn: {
-    marginLeft: "auto",
-    display: "flex",
-    alignItems: "center",
-    gap: "6px",
-    padding: "6px 12px",
-    background: "rgba(255,255,255,0.2)",
-    color: "white",
-    border: "none",
-    borderRadius: "6px",
-    fontSize: "0.8rem",
-    cursor: "pointer",
-  },
-  dbStatus: {
-    marginLeft: "auto",
-    fontSize: "0.7rem",
-    background: "rgba(46, 125, 50, 0.2)",
-    color: "#2e7d32",
-    padding: "4px 8px",
-    borderRadius: "4px",
-    fontWeight: 600,
-  },
-  dbStatusFallback: {
-    marginLeft: "auto",
-    fontSize: "0.7rem",
-    background: "rgba(244, 67, 54, 0.2)",
-    color: "#f44336",
-    padding: "4px 8px",
-    borderRadius: "4px",
-    fontWeight: 600,
-  },
-  dbInfo: {
-    marginLeft: "20px",
-    fontSize: "0.7rem",
-    color: "rgba(255,255,255,0.5)",
-  },
-  modalHeader: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: "1.5rem",
-  },
-  statsGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(5, 1fr)",
-    gap: "10px",
-    marginBottom: "1.5rem",
-  },
-  statCard: {
-    background: "#f8f9fa",
-    padding: "12px",
-    borderRadius: "8px",
-    textAlign: "center",
-  },
-  statNumber: {
-    fontSize: "1.2rem",
-    fontWeight: "bold",
-    color: "#C4704F",
-    marginBottom: "4px",
-  },
-  statLabel: {
-    fontSize: "0.7rem",
-    color: "#666",
-    textTransform: "uppercase",
-    letterSpacing: "0.05em",
-  },
-  section: {
-    marginBottom: "1.5rem",
-    paddingBottom: "1.5rem",
-    borderBottom: "1px solid #eee",
-  },
-  sectionTitle: {
-    fontSize: "1rem",
-    fontWeight: 600,
-    marginBottom: "0.5rem",
-    color: "#333",
-  },
-  sectionDesc: {
-    fontSize: "0.9rem",
-    color: "#666",
-    marginBottom: "1rem",
-  },
-  buttonGroup: {
-    display: "flex",
-    gap: "10px",
-    marginBottom: "1rem",
-  },
-  exportBtn: {
-    padding: "10px 16px",
-    background: "#C4704F",
-    color: "white",
-    border: "none",
-    borderRadius: "8px",
-    cursor: "pointer",
-    fontSize: "0.9rem",
-    fontWeight: 500,
-  },
-  importSection: {
-    marginTop: "1rem",
-  },
-  importTextarea: {
-    width: "100%",
-    padding: "12px",
-    border: "1px solid #ddd",
-    borderRadius: "8px",
-    fontSize: "0.9rem",
-    fontFamily: "monospace",
-    marginBottom: "10px",
-    resize: "vertical",
-    minHeight: "100px",
-    boxSizing: "border-box",
-  },
-  importBtn: {
-    padding: "10px 16px",
-    background: "#2C2C2C",
-    color: "white",
-    border: "none",
-    borderRadius: "8px",
-    cursor: "pointer",
-    fontSize: "0.9rem",
-    fontWeight: 500,
-  },
-  dangerText: {
-    fontSize: "0.9rem",
-    color: "#e74c3c",
-    marginBottom: "1rem",
-  },
-  clearAllBtn: {
-    padding: "10px 16px",
-    background: "#e74c3c",
-    color: "white",
-    border: "none",
-    borderRadius: "8px",
-    cursor: "pointer",
-    fontSize: "0.9rem",
-    fontWeight: 500,
-  },
-  footerNote: {
-    display: "flex",
-    alignItems: "center",
-    gap: "8px",
-    fontSize: "0.8rem",
-    color: "#e74c3c",
-    marginTop: "1rem",
-    paddingTop: "1rem",
-    borderTop: "1px solid #eee",
-  },
-};
-
-// Merge additional styles with existing styles
-Object.assign(styles, additionalStyles);
-
-// ============================================
-// STYLES (Keep all your existing styles)
+// STYLES
 // ============================================
 const styles = {
-  // ... (Keep all your existing styles exactly as they were)
   app: {
     fontFamily: "'DM Sans', -apple-system, sans-serif",
     background: "#F7F3ED",
@@ -3625,27 +2618,1380 @@ const styles = {
     gap: "1rem",
     color: "#666",
   },
-  // ... (Rest of styles remain exactly the same)
+  loadingSpinner: {
+    width: "40px",
+    height: "40px",
+    border: "3px solid #eee",
+    borderTopColor: "#C4704F",
+    borderRadius: "50%",
+    animation: "spin 1s linear infinite",
+  },
+  toast: {
+    position: "fixed",
+    top: "20px",
+    right: "20px",
+    padding: "12px 20px",
+    borderRadius: "8px",
+    color: "white",
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    zIndex: 9999,
+    boxShadow: "0 4px 20px rgba(0,0,0,0.2)",
+  },
+
+  // User Avatar
+  userAvatarWrapper: { display: "flex", alignItems: "center", gap: "8px" },
+  userAvatar: { borderRadius: "50%", objectFit: "cover" },
+  userAvatarName: { fontWeight: 500, fontSize: "0.9rem" },
+
+  // Modal
+  modalOverlay: {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(0,0,0,0.6)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 9999,
+    padding: "20px",
+  },
+  modal: {
+    background: "white",
+    padding: "2rem",
+    borderRadius: "16px",
+    maxWidth: "420px",
+    width: "100%",
+    maxHeight: "90vh",
+    overflowY: "auto",
+  },
+  modalTitle: {
+    fontFamily: "'Cormorant Garamond', Georgia, serif",
+    fontSize: "1.5rem",
+    marginBottom: "0.5rem",
+  },
+  modalDesc: { color: "#666", fontSize: "0.9rem", marginBottom: "1.5rem" },
+  modalInput: {
+    width: "100%",
+    padding: "12px",
+    fontSize: "1rem",
+    border: "1px solid #ddd",
+    borderRadius: "8px",
+    outline: "none",
+    marginBottom: "1rem",
+    boxSizing: "border-box",
+  },
+  modalActions: {
+    display: "flex",
+    justifyContent: "flex-end",
+    gap: "1rem",
+    marginTop: "1rem",
+  },
+  modalCloseBtn: {
+    position: "absolute",
+    top: "16px",
+    right: "16px",
+    background: "none",
+    border: "none",
+    cursor: "pointer",
+    color: "#666",
+    padding: "8px",
+  },
+  deleteModalIcon: {
+    width: "50px",
+    height: "50px",
+    borderRadius: "50%",
+    background: "#ffeaea",
+    color: "#e74c3c",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: "1rem",
+  },
+  deleteConfirmBtn: {
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+    padding: "12px 20px",
+    background: "#e74c3c",
+    color: "white",
+    border: "none",
+    borderRadius: "8px",
+    fontWeight: 600,
+    cursor: "pointer",
+  },
+
+  // Comment Modal
+  commentModal: {
+    background: "white",
+    borderRadius: "16px",
+    maxWidth: "600px",
+    width: "100%",
+    maxHeight: "85vh",
+    display: "flex",
+    flexDirection: "column",
+    position: "relative",
+  },
+  commentModalHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: "20px 24px",
+    borderBottom: "1px solid #eee",
+  },
+  commentModalTitle: {
+    fontFamily: "'Cormorant Garamond', Georgia, serif",
+    fontSize: "1.3rem",
+    fontWeight: 600,
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    margin: 0,
+  },
+  commentModalStoryPreview: {
+    display: "flex",
+    gap: "12px",
+    padding: "16px 24px",
+    background: "#f9f9f9",
+    borderBottom: "1px solid #eee",
+  },
+  commentModalStoryImage: {
+    width: "60px",
+    height: "60px",
+    borderRadius: "8px",
+    objectFit: "cover",
+  },
+  commentModalStoryInfo: { flex: 1 },
+  commentModalStoryTitle: {
+    fontSize: "0.95rem",
+    fontWeight: 600,
+    marginBottom: "4px",
+    margin: 0,
+  },
+  commentModalStoryAuthor: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    fontSize: "0.85rem",
+    color: "#666",
+  },
+  commentModalList: {
+    flex: 1,
+    overflowY: "auto",
+    padding: "16px 24px",
+    maxHeight: "350px",
+  },
+  commentModalItem: {
+    display: "flex",
+    gap: "12px",
+    marginBottom: "16px",
+    paddingBottom: "16px",
+    borderBottom: "1px solid #f0f0f0",
+  },
+  commentModalAvatar: {
+    width: "40px",
+    height: "40px",
+    borderRadius: "50%",
+    objectFit: "cover",
+    flexShrink: 0,
+  },
+  commentModalBody: { flex: 1 },
+  commentModalMeta: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    marginBottom: "4px",
+  },
+  commentModalAuthor: { fontWeight: 600, fontSize: "0.9rem" },
+  commentModalDate: { fontSize: "0.8rem", color: "#888" },
+  commentModalText: {
+    fontSize: "0.95rem",
+    lineHeight: 1.5,
+    color: "#444",
+    margin: 0,
+  },
+  commentModalInput: {
+    padding: "16px 24px",
+    borderTop: "1px solid #eee",
+    display: "flex",
+    gap: "12px",
+    alignItems: "flex-start",
+  },
+  commentInputWrapper: {
+    flex: 1,
+    display: "flex",
+    flexDirection: "column",
+    gap: "8px",
+  },
+  commentTextarea: {
+    width: "100%",
+    padding: "12px",
+    fontSize: "0.95rem",
+    border: "1px solid #ddd",
+    borderRadius: "8px",
+    resize: "none",
+    fontFamily: "inherit",
+    outline: "none",
+    boxSizing: "border-box",
+  },
+  commentSubmitBtn: {
+    alignSelf: "flex-end",
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+    padding: "10px 20px",
+    background: "#C4704F",
+    color: "white",
+    border: "none",
+    borderRadius: "8px",
+    fontWeight: 600,
+    cursor: "pointer",
+  },
+  noCommentsModal: { textAlign: "center", padding: "40px 20px", color: "#888" },
+  deleteCommentBtn: {
+    background: "none",
+    border: "none",
+    color: "#e74c3c",
+    cursor: "pointer",
+    padding: "4px",
+    marginLeft: "auto",
+    opacity: 0.6,
+  },
+  signInPrompt: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "8px",
+    padding: "16px",
+    background: "#f5f5f5",
+    borderRadius: "8px",
+    color: "#666",
+    width: "100%",
+  },
+
+  // Auth Modal
+  authModal: {
+    background: "white",
+    borderRadius: "16px",
+    maxWidth: "400px",
+    width: "100%",
+    padding: "40px",
+    position: "relative",
+    textAlign: "center",
+  },
+  authCloseBtn: {
+    position: "absolute",
+    top: "16px",
+    right: "16px",
+    background: "none",
+    border: "none",
+    cursor: "pointer",
+    color: "#666",
+  },
+  authHeader: { marginBottom: "32px" },
+  authTitle: {
+    fontFamily: "'Cormorant Garamond', Georgia, serif",
+    fontSize: "2rem",
+    marginBottom: "8px",
+  },
+  authSubtitle: { color: "#666", fontSize: "0.95rem" },
+  authButtons: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "16px",
+    marginBottom: "24px",
+  },
+  googleBtn: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "12px",
+    width: "100%",
+    padding: "14px 24px",
+    background: "white",
+    border: "1px solid #ddd",
+    borderRadius: "8px",
+    fontWeight: 500,
+    cursor: "pointer",
+    fontSize: "1rem",
+  },
+  termsText: { fontSize: "0.8rem", color: "#888" },
+  profileView: { textAlign: "center" },
+  profileHeader: { marginBottom: "24px" },
+  profileAvatarLarge: {
+    width: "80px",
+    height: "80px",
+    borderRadius: "50%",
+    marginBottom: "16px",
+    border: "3px solid white",
+    boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
+  },
+  profileName: {
+    fontFamily: "'Cormorant Garamond', Georgia, serif",
+    fontSize: "1.5rem",
+    marginBottom: "4px",
+  },
+  profileEmail: { color: "#666", fontSize: "0.9rem" },
+  adminBadgeProfile: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "6px",
+    padding: "8px 16px",
+    background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+    color: "white",
+    borderRadius: "20px",
+    fontSize: "0.85rem",
+    fontWeight: 600,
+    marginTop: "12px",
+  },
+  memberBadge: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "6px",
+    padding: "8px 16px",
+    background: "#8B9A7D",
+    color: "white",
+    borderRadius: "20px",
+    fontSize: "0.85rem",
+    fontWeight: 600,
+    marginTop: "8px",
+  },
+  profileStats: {
+    display: "grid",
+    gridTemplateColumns: "repeat(3, 1fr)",
+    gap: "16px",
+    margin: "24px 0",
+    padding: "20px",
+    background: "#f9f9f9",
+    borderRadius: "12px",
+  },
+  profileStat: {
+    display: "flex",
+    alignItems: "center",
+    gap: "12px",
+  },
+  statNumber: {
+    fontSize: "1.2rem",
+    fontWeight: 700,
+    color: "#C4704F",
+  },
+  statLabel: {
+    fontSize: "0.75rem",
+    color: "#666",
+    textTransform: "uppercase",
+    letterSpacing: "0.05em",
+  },
+  profileFooter: {
+    borderTop: "1px solid #eee",
+    paddingTop: "20px",
+    textAlign: "center",
+  },
+  signOutBtn: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    padding: "12px 24px",
+    background: "#ffeaea",
+    color: "#e74c3c",
+    border: "none",
+    borderRadius: "8px",
+    fontSize: "0.95rem",
+    fontWeight: 600,
+    cursor: "pointer",
+    marginBottom: "12px",
+    width: "100%",
+    justifyContent: "center",
+  },
+  accountNote: {
+    fontSize: "0.8rem",
+    color: "#888",
+  },
+  loginView: {},
+  authDivider: {
+    display: "flex",
+    alignItems: "center",
+    width: "100%",
+    margin: "20px 0",
+  },
+  dividerLine: {
+    flex: 1,
+    height: "1px",
+    background: "#eee",
+  },
+  dividerText: {
+    padding: "0 16px",
+    color: "#999",
+    fontSize: "0.85rem",
+    fontWeight: 500,
+  },
+  guestBtn: {
+    width: "100%",
+    padding: "14px 24px",
+    background: "#2C2C2C",
+    color: "white",
+    border: "none",
+    borderRadius: "8px",
+    fontSize: "0.95rem",
+    fontWeight: 600,
+    cursor: "pointer",
+  },
+  authBenefits: {
+    background: "#f0f7ff",
+    padding: "20px",
+    borderRadius: "12px",
+    margin: "24px 0",
+  },
+  benefitsTitle: {
+    fontSize: "0.9rem",
+    fontWeight: 600,
+    color: "#2C2C2C",
+    marginBottom: "12px",
+  },
+  benefitsList: {
+    listStyle: "none",
+    padding: 0,
+    margin: 0,
+  },
+  benefitItem: {
+    fontSize: "0.85rem",
+    color: "#666",
+    padding: "4px 0",
+    display: "flex",
+    alignItems: "center",
+  },
+
+  // Notifications
+  notificationContainer: { position: "relative" },
+  notificationBtn: {
+    background: "#f5f5f5",
+    border: "none",
+    borderRadius: "8px",
+    padding: "10px",
+    cursor: "pointer",
+    position: "relative",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  notificationBadge: {
+    position: "absolute",
+    top: "-4px",
+    right: "-4px",
+    background: "#e74c3c",
+    color: "white",
+    fontSize: "0.7rem",
+    padding: "2px 6px",
+    borderRadius: "10px",
+    fontWeight: 600,
+  },
+  notificationDropdown: {
+    position: "absolute",
+    top: "100%",
+    right: 0,
+    width: "320px",
+    background: "white",
+    borderRadius: "12px",
+    boxShadow: "0 8px 30px rgba(0,0,0,0.15)",
+    zIndex: 1000,
+    marginTop: "8px",
+  },
+  notificationHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: "16px",
+    borderBottom: "1px solid #eee",
+  },
+  notificationList: { maxHeight: "400px", overflowY: "auto" },
+  notificationItem: {
+    display: "flex",
+    gap: "12px",
+    padding: "12px 16px",
+    cursor: "pointer",
+    transition: "background 0.2s",
+  },
+  notificationAvatar: {
+    width: "40px",
+    height: "40px",
+    borderRadius: "50%",
+    objectFit: "cover",
+  },
+  notificationContent: { flex: 1 },
+  notificationText: { fontSize: "0.9rem", marginBottom: "4px", margin: 0 },
+  notificationTime: { fontSize: "0.75rem", color: "#888" },
+  noNotifications: { padding: "32px", textAlign: "center", color: "#888" },
+  clearAllBtn: {
+    background: "none",
+    border: "none",
+    color: "#C4704F",
+    cursor: "pointer",
+    fontSize: "0.85rem",
+  },
+
+  // Image Gallery
+  galleryOverlay: {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(0,0,0,0.95)",
+    zIndex: 9999,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  galleryContent: { position: "relative", maxWidth: "90vw", maxHeight: "90vh" },
+  galleryImageContainer: {
+    position: "relative",
+    width: "100%",
+    height: "100%",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  galleryImage: {
+    maxWidth: "100%",
+    maxHeight: "85vh",
+    objectFit: "contain",
+    borderRadius: "8px",
+  },
+  galleryCloseBtn: {
+    position: "absolute",
+    top: "-50px",
+    right: "0",
+    background: "none",
+    border: "none",
+    color: "white",
+    cursor: "pointer",
+    fontSize: "24px",
+  },
+  galleryNavBtn: {
+    position: "absolute",
+    top: "50%",
+    transform: "translateY(-50%)",
+    background: "rgba(255,255,255,0.2)",
+    border: "none",
+    borderRadius: "50%",
+    width: "50px",
+    height: "50px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    cursor: "pointer",
+    color: "white",
+  },
+  galleryIndicators: {
+    position: "absolute",
+    bottom: "20px",
+    left: "50%",
+    transform: "translateX(-50%)",
+    display: "flex",
+    gap: "8px",
+  },
+  galleryDot: {
+    width: "8px",
+    height: "8px",
+    borderRadius: "50%",
+    cursor: "pointer",
+  },
+  galleryCounter: {
+    position: "absolute",
+    bottom: "20px",
+    right: "20px",
+    color: "white",
+    fontSize: "0.9rem",
+  },
+
+  // Multi Image Upload
+  multiImageUpload: { marginBottom: "24px" },
+  imageGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))",
+    gap: "12px",
+  },
+  uploadedImageWrapper: {
+    position: "relative",
+    aspectRatio: "1",
+    borderRadius: "8px",
+    overflow: "hidden",
+  },
+  uploadedImage: { width: "100%", height: "100%", objectFit: "cover" },
+  imageOverlayActions: {
+    position: "absolute",
+    inset: 0,
+    background: "rgba(0,0,0,0.4)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "8px",
+    opacity: 0,
+    transition: "opacity 0.2s",
+  },
+  moveBtn: {
+    background: "white",
+    border: "none",
+    borderRadius: "4px",
+    padding: "4px 8px",
+    cursor: "pointer",
+  },
+  removeImageBtn: {
+    background: "#e74c3c",
+    color: "white",
+    border: "none",
+    borderRadius: "50%",
+    width: "28px",
+    height: "28px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    cursor: "pointer",
+  },
+  coverBadge: {
+    position: "absolute",
+    top: "8px",
+    left: "8px",
+    background: "#C4704F",
+    color: "white",
+    fontSize: "0.7rem",
+    padding: "4px 8px",
+    borderRadius: "4px",
+    fontWeight: 600,
+  },
+  addImageBtn: {
+    aspectRatio: "1",
+    border: "2px dashed #ddd",
+    borderRadius: "8px",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "8px",
+    cursor: "pointer",
+    color: "#888",
+    transition: "border-color 0.2s",
+  },
+  imageCount: { fontSize: "0.75rem", color: "#aaa" },
+
+  // Story Card
+  imageIndicators: {
+    position: "absolute",
+    bottom: "12px",
+    left: "50%",
+    transform: "translateX(-50%)",
+    display: "flex",
+    gap: "6px",
+  },
+  imageDot: {
+    width: "6px",
+    height: "6px",
+    borderRadius: "50%",
+    cursor: "pointer",
+  },
+
+  // Navigation
+  nav: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: "1rem 3rem",
+    background: "rgba(247,243,237,0.95)",
+    backdropFilter: "blur(10px)",
+    position: "sticky",
+    top: 0,
+    zIndex: 100,
+    borderBottom: "1px solid rgba(0,0,0,0.05)",
+  },
+  logo: {
+    fontFamily: "'Cormorant Garamond', Georgia, serif",
+    fontSize: "1.6rem",
+    fontWeight: 700,
+    color: "#2C2C2C",
+    cursor: "pointer",
+  },
+  logoAccent: { color: "#C4704F" },
+  navLinks: { display: "flex", alignItems: "center", gap: "1.5rem" },
+  navLink: {
+    color: "#5A5A5A",
+    textDecoration: "none",
+    fontSize: "0.9rem",
+    fontWeight: 500,
+    cursor: "pointer",
+    display: "flex",
+    alignItems: "center",
+    gap: "4px",
+  },
+  badge: {
+    background: "#C4704F",
+    color: "white",
+    fontSize: "0.7rem",
+    padding: "2px 6px",
+    borderRadius: "10px",
+    fontWeight: 600,
+  },
+  createBtn: {
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+    padding: "10px 20px",
+    background: "#C4704F",
+    color: "white",
+    border: "none",
+    borderRadius: "8px",
+    fontSize: "0.9rem",
+    fontWeight: 600,
+    cursor: "pointer",
+  },
+  refreshBtn: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: "10px",
+    background: "#f5f5f5",
+    color: "#666",
+    border: "none",
+    borderRadius: "8px",
+    cursor: "pointer",
+  },
+  signInBtn: {
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+    padding: "10px 20px",
+    background: "#2C2C2C",
+    color: "white",
+    border: "none",
+    borderRadius: "8px",
+    fontSize: "0.9rem",
+    fontWeight: 500,
+    cursor: "pointer",
+  },
+  adminLoginNavBtn: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: "10px",
+    background: "#f5f5f5",
+    color: "#666",
+    border: "none",
+    borderRadius: "8px",
+    cursor: "pointer",
+  },
+  adminBadgeContainer: { display: "flex", alignItems: "center", gap: "8px" },
+  adminBadge: {
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+    padding: "8px 14px",
+    background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+    color: "white",
+    borderRadius: "8px",
+    fontSize: "0.85rem",
+    fontWeight: 600,
+  },
+  logoutBtn: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: "8px",
+    background: "#f5f5f5",
+    color: "#666",
+    border: "none",
+    borderRadius: "8px",
+    cursor: "pointer",
+  },
+  adminBanner: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "8px",
+    padding: "10px",
+    background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+    color: "white",
+    fontSize: "0.85rem",
+    fontWeight: 500,
+  },
+  publicBanner: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "8px",
+    padding: "8px",
+    background: "#e8f5e9",
+    color: "#2e7d32",
+    fontSize: "0.8rem",
+    fontWeight: 500,
+  },
+  adminLoginHeader: {
+    display: "flex",
+    alignItems: "center",
+    gap: "12px",
+    marginBottom: "16px",
+  },
+  adminIconBig: {
+    width: "40px",
+    height: "40px",
+    borderRadius: "50%",
+    background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+    color: "white",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  loginForm: { display: "flex", flexDirection: "column" },
+  loginError: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    padding: "10px",
+    background: "#ffeaea",
+    color: "#e74c3c",
+    borderRadius: "8px",
+    marginBottom: "16px",
+    fontSize: "0.9rem",
+  },
+  adminLoginBtn: {
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+    padding: "12px 20px",
+    background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+    color: "white",
+    border: "none",
+    borderRadius: "8px",
+    fontWeight: 600,
+    cursor: "pointer",
+  },
+
+  // Main
+  main: {
+    maxWidth: "1200px",
+    margin: "0 auto",
+    padding: "0 2rem",
+    minHeight: "calc(100vh - 200px)",
+  },
+
+  // Hero
+  hero: {
+    display: "grid",
+    gridTemplateColumns: "1fr 1fr",
+    gap: "4rem",
+    alignItems: "center",
+    padding: "4rem 0",
+  },
+  heroContent: {},
+  heroTag: {
+    display: "inline-block",
+    fontSize: "0.7rem",
+    fontWeight: 700,
+    letterSpacing: "0.15em",
+    textTransform: "uppercase",
+    color: "#C4704F",
+    marginBottom: "1rem",
+    padding: "6px 12px",
+    background: "rgba(196,112,79,0.1)",
+    borderRadius: "4px",
+  },
+  heroTitle: {
+    fontFamily: "'Cormorant Garamond', Georgia, serif",
+    fontSize: "3.2rem",
+    fontWeight: 700,
+    lineHeight: 1.1,
+    marginBottom: "1rem",
+  },
+  heroEmphasis: { fontStyle: "italic", color: "#C4704F" },
+  heroDesc: {
+    fontSize: "1.1rem",
+    color: "#5A5A5A",
+    lineHeight: 1.7,
+    marginBottom: "2rem",
+  },
+  heroCta: { display: "flex", gap: "1rem" },
+  btnPrimary: {
+    padding: "14px 28px",
+    background: "#C4704F",
+    color: "white",
+    border: "none",
+    borderRadius: "8px",
+    fontSize: "0.95rem",
+    fontWeight: 600,
+    cursor: "pointer",
+  },
+  heroImageWrapper: { position: "relative" },
+  heroImage: {
+    width: "100%",
+    height: "500px",
+    objectFit: "cover",
+    borderRadius: "12px",
+    boxShadow: "20px 20px 60px rgba(0,0,0,0.15)",
+  },
+  heroStats: {
+    position: "absolute",
+    bottom: "-20px",
+    right: "-20px",
+    background: "white",
+    padding: "1.5rem 2rem",
+    borderRadius: "12px",
+    boxShadow: "0 10px 40px rgba(0,0,0,0.1)",
+    display: "flex",
+    gap: "2rem",
+  },
+  stat: { textAlign: "center" },
+
+  // Filters
+  filterSection: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: "1rem",
+    padding: "1rem 0",
+    marginBottom: "1rem",
+  },
+  searchBar: {
+    display: "flex",
+    alignItems: "center",
+    gap: "10px",
+    background: "white",
+    padding: "12px 16px",
+    borderRadius: "8px",
+    flex: 1,
+    maxWidth: "500px",
+    boxShadow: "0 2px 8px rgba(0,0,0,0.05)",
+  },
+  searchInput: {
+    flex: 1,
+    border: "none",
+    outline: "none",
+    fontSize: "0.95rem",
+    background: "transparent",
+  },
+  clearSearch: {
+    background: "none",
+    border: "none",
+    cursor: "pointer",
+    color: "#999",
+    padding: "4px",
+  },
+  filterControls: { display: "flex", alignItems: "center", gap: "1rem" },
+  filterBtn: {
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+    padding: "10px 16px",
+    border: "none",
+    borderRadius: "8px",
+    fontSize: "0.9rem",
+    fontWeight: 500,
+    cursor: "pointer",
+  },
+  viewToggle: {
+    display: "flex",
+    background: "#f5f5f5",
+    borderRadius: "8px",
+    overflow: "hidden",
+  },
+  viewBtn: {
+    padding: "10px 12px",
+    border: "none",
+    cursor: "pointer",
+    background: "transparent",
+  },
+  expandedFilters: {
+    background: "white",
+    padding: "1.5rem",
+    borderRadius: "12px",
+    marginBottom: "1.5rem",
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "2rem",
+    alignItems: "flex-end",
+  },
+  filterGroup: { flex: "1 1 auto", minWidth: "200px" },
+  filterLabel: {
+    display: "block",
+    fontSize: "0.8rem",
+    fontWeight: 600,
+    color: "#666",
+    marginBottom: "0.75rem",
+    textTransform: "uppercase",
+    letterSpacing: "0.05em",
+  },
+  categoryPills: { display: "flex", flexWrap: "wrap", gap: "8px" },
+  categoryPill: {
+    padding: "8px 14px",
+    border: "1px solid #ddd",
+    borderRadius: "20px",
+    fontSize: "0.85rem",
+    cursor: "pointer",
+    background: "white",
+  },
+  sortSelect: {
+    padding: "10px 14px",
+    fontSize: "0.9rem",
+    border: "1px solid #ddd",
+    borderRadius: "8px",
+    background: "white",
+    cursor: "pointer",
+    minWidth: "150px",
+  },
+
+  // Stories
+  storiesSection: { padding: "2rem 0 4rem" },
+  storiesGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))",
+    gap: "1.5rem",
+  },
+  storiesList: { display: "flex", flexDirection: "column", gap: "1.5rem" },
+  storyCard: {
+    background: "white",
+    borderRadius: "12px",
+    overflow: "hidden",
+    cursor: "pointer",
+    transition: "all 0.3s ease",
+    boxShadow: "0 2px 10px rgba(0,0,0,0.05)",
+    display: "flex",
+    flexDirection: "column",
+  },
+  storyCardFeatured: { gridColumn: "span 2" },
+  storyCardList: { flexDirection: "row" },
+  storyImageWrapper: {
+    position: "relative",
+    overflow: "hidden",
+    height: "200px",
+  },
+  storyImageWrapperList: { flex: "0 0 250px" },
+  storyImage: {
+    width: "100%",
+    height: "100%",
+    objectFit: "cover",
+    transition: "transform 0.4s ease",
+  },
+  storyOverlay: {
+    position: "absolute",
+    inset: 0,
+    background: "rgba(0,0,0,0.4)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    opacity: 0,
+    transition: "opacity 0.3s ease",
+  },
+  readMore: { color: "white", fontWeight: 600, fontSize: "0.9rem" },
+  storyActions: {
+    position: "absolute",
+    top: "10px",
+    right: "10px",
+    display: "flex",
+    gap: "8px",
+  },
+  actionIconBtn: {
+    background: "rgba(0,0,0,0.4)",
+    border: "none",
+    borderRadius: "50%",
+    width: "36px",
+    height: "36px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    cursor: "pointer",
+    color: "white",
+  },
+  storyContent: {
+    padding: "1.25rem",
+    flex: 1,
+    display: "flex",
+    flexDirection: "column",
+  },
+  storyCategory: {
+    fontSize: "0.65rem",
+    fontWeight: 700,
+    letterSpacing: "0.12em",
+    textTransform: "uppercase",
+    color: "#C4704F",
+    marginBottom: "0.5rem",
+    display: "block",
+  },
+  storyTitle: {
+    fontFamily: "'Cormorant Garamond', Georgia, serif",
+    fontSize: "1.2rem",
+    fontWeight: 600,
+    lineHeight: 1.3,
+    marginBottom: "0.5rem",
+    flex: 1,
+  },
+  storyExcerpt: {
+    fontSize: "0.9rem",
+    color: "#666",
+    lineHeight: 1.6,
+    marginBottom: "1rem",
+    display: "-webkit-box",
+    WebkitLineClamp: 2,
+    WebkitBoxOrient: "vertical",
+    overflow: "hidden",
+  },
+  storyMeta: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    fontSize: "0.8rem",
+    color: "#888",
+    marginTop: "auto",
+  },
+  storyAuthor: { display: "flex", alignItems: "center", gap: "8px" },
+  storyStats: { display: "flex", alignItems: "center", gap: "12px" },
+  metaItem: { display: "flex", alignItems: "center", gap: "4px" },
+  emptyState: { textAlign: "center", padding: "4rem 2rem", color: "#888" },
+
+  // Article Page
+  articlePage: { maxWidth: "800px", margin: "0 auto", padding: "2rem 0 4rem" },
+  backBtn: {
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+    background: "none",
+    border: "none",
+    color: "#666",
+    fontSize: "0.9rem",
+    cursor: "pointer",
+    marginBottom: "2rem",
+    padding: "8px 0",
+  },
+  articleHeader: { marginBottom: "2rem" },
+  articleCategory: {
+    fontSize: "0.7rem",
+    fontWeight: 700,
+    letterSpacing: "0.15em",
+    textTransform: "uppercase",
+    color: "#C4704F",
+    marginBottom: "1rem",
+    display: "block",
+  },
+  articleTitle: {
+    fontFamily: "'Cormorant Garamond', Georgia, serif",
+    fontSize: "2.8rem",
+    fontWeight: 700,
+    lineHeight: 1.2,
+    marginBottom: "1.5rem",
+  },
+  articleMeta: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: "1rem",
+  },
+  articleInfo: {
+    display: "flex",
+    gap: "8px",
+    fontSize: "0.85rem",
+    color: "#888",
+    alignItems: "center",
+  },
+  articleImageGallery: {
+    position: "relative",
+    cursor: "pointer",
+    marginBottom: "2rem",
+  },
+  articleCover: {
+    width: "100%",
+    height: "400px",
+    objectFit: "cover",
+    borderRadius: "12px",
+  },
+  moreImagesOverlay: {
+    position: "absolute",
+    bottom: "16px",
+    right: "16px",
+    background: "rgba(0,0,0,0.7)",
+    color: "white",
+    padding: "8px 16px",
+    borderRadius: "8px",
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    fontSize: "0.9rem",
+  },
+  articleBody: { fontSize: "1.1rem", lineHeight: 1.9, color: "#333" },
+  articleParagraph: { marginBottom: "1.5rem" },
+  articleActionsBar: {
+    display: "flex",
+    gap: "1rem",
+    padding: "1.5rem 0",
+    borderTop: "1px solid #eee",
+    borderBottom: "1px solid #eee",
+    marginTop: "2rem",
+    flexWrap: "wrap",
+  },
+  articleActionBtn: {
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+    padding: "10px 16px",
+    background: "#f5f5f5",
+    border: "none",
+    borderRadius: "8px",
+    fontSize: "0.9rem",
+    fontWeight: 500,
+    cursor: "pointer",
+    color: "#666",
+  },
+  deleteBtn: { background: "#ffeaea", color: "#e74c3c" },
+
+  // Create Page
+  createPage: { maxWidth: "800px", margin: "0 auto", padding: "2rem 0 4rem" },
+  createHeader: { marginBottom: "2rem" },
+  createTitle: {
+    fontFamily: "'Cormorant Garamond', Georgia, serif",
+    fontSize: "2.5rem",
+    fontWeight: 700,
+  },
+  titleEmphasis: { fontStyle: "italic", color: "#8B9A7D" },
+  publicNote: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    color: "#2e7d32",
+    fontSize: "0.9rem",
+    marginTop: "8px",
+  },
+  privateNote: {
+    color: "#666",
+    fontSize: "0.9rem",
+    marginTop: "8px",
+  },
+  createForm: {
+    background: "white",
+    padding: "2rem",
+    borderRadius: "16px",
+    boxShadow: "0 4px 20px rgba(0,0,0,0.08)",
+  },
+  titleInput: {
+    width: "100%",
+    padding: "1rem",
+    fontSize: "1.5rem",
+    fontFamily: "'Cormorant Garamond', Georgia, serif",
+    fontWeight: 600,
+    border: "none",
+    borderBottom: "2px solid #eee",
+    marginBottom: "1rem",
+    outline: "none",
+    boxSizing: "border-box",
+  },
+  formRow: {
+    display: "grid",
+    gridTemplateColumns: "1fr 1fr",
+    gap: "1rem",
+    marginBottom: "1rem",
+  },
+  selectInput: {
+    padding: "12px",
+    fontSize: "0.95rem",
+    border: "1px solid #ddd",
+    borderRadius: "8px",
+    background: "white",
+    outline: "none",
+    cursor: "pointer",
+    boxSizing: "border-box",
+  },
+  locationInput: {
+    padding: "12px",
+    fontSize: "0.95rem",
+    border: "1px solid #ddd",
+    borderRadius: "8px",
+    outline: "none",
+    boxSizing: "border-box",
+  },
+  excerptInput: {
+    width: "100%",
+    padding: "12px",
+    fontSize: "0.95rem",
+    border: "1px solid #ddd",
+    borderRadius: "8px",
+    marginBottom: "1rem",
+    resize: "vertical",
+    fontFamily: "inherit",
+    outline: "none",
+    boxSizing: "border-box",
+  },
+  contentInput: {
+    width: "100%",
+    padding: "1rem",
+    fontSize: "1rem",
+    lineHeight: 1.8,
+    border: "1px solid #ddd",
+    borderRadius: "8px",
+    resize: "vertical",
+    fontFamily: "inherit",
+    outline: "none",
+    minHeight: "300px",
+    boxSizing: "border-box",
+  },
+  formActions: {
+    display: "flex",
+    justifyContent: "flex-end",
+    gap: "1rem",
+    marginTop: "1.5rem",
+  },
+  cancelBtn: {
+    padding: "12px 24px",
+    background: "#f5f5f5",
+    color: "#666",
+    border: "none",
+    borderRadius: "8px",
+    fontSize: "0.95rem",
+    fontWeight: 500,
+    cursor: "pointer",
+  },
+  publishBtn: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    padding: "12px 24px",
+    background: "#C4704F",
+    color: "white",
+    border: "none",
+    borderRadius: "8px",
+    fontSize: "0.95rem",
+    fontWeight: 600,
+    cursor: "pointer",
+  },
+
+  // Bookmarks
+  bookmarksPage: { padding: "2rem 0 4rem" },
+  pageHeader: { marginBottom: "2rem" },
+  pageTitle: {
+    fontFamily: "'Cormorant Garamond', Georgia, serif",
+    fontSize: "2.5rem",
+    fontWeight: 700,
+  },
+
+  // Footer
+  footer: {
+    background: "#2C2C2C",
+    color: "white",
+    padding: "3rem",
+    marginTop: "4rem",
+  },
+  footerContent: {
+    maxWidth: "1200px",
+    margin: "0 auto",
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: "2rem",
+    flexWrap: "wrap",
+    gap: "2rem",
+  },
+  footerBrand: {},
+  footerText: {
+    color: "rgba(255,255,255,0.6)",
+    fontSize: "0.9rem",
+    marginTop: "0.5rem",
+  },
+  footerLinks: { display: "flex", gap: "2rem" },
   footerBottom: {
     textAlign: "center",
     paddingTop: "2rem",
     borderTop: "1px solid rgba(255,255,255,0.1)",
     color: "rgba(255,255,255,0.5)",
     fontSize: "0.85rem",
-    display: "flex",
-    justifyContent: "center",
-    alignItems: "center",
   },
 };
-
-// Add CSS animation for spinner
-const styleSheet = document.styleSheets[0];
-styleSheet.insertRule(
-  `
-  @keyframes spin {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
-  }
-`,
-  styleSheet.cssRules.length
-);
