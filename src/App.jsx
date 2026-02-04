@@ -5,7 +5,7 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 // ============================================
 const GOOGLE_CLIENT_ID =
   process.env.REACT_APP_GOOGLE_CLIENT_ID ||
-  "89220882541-r7jkt456a57ve9c3jh46mb6fnoeuq379.apps.googleusercontent.com";
+  "89220882541-b29l85mftlq2t4e8k3r2972mvgivkuo2.apps.googleusercontent.com";
 const API_URL = process.env.REACT_APP_API_URL || "http://localhost:3001";
 
 // Admin credentials
