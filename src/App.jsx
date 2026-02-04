@@ -5,7 +5,7 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 // ============================================
 const GOOGLE_CLIENT_ID =
   process.env.REACT_APP_GOOGLE_CLIENT_ID ||
-  "89220882541-b29l85mftlq2t4e8k3r2972mvgivkuo2.apps.googleusercontent.com";
+  "89220882541-r7jkt456a57ve9c3jh46mb6fnoeuq379.apps.googleusercontent.com";
 
 // Admin credentials
 const ADMIN_CREDENTIALS = {
@@ -17,8 +17,7 @@ const ADMIN_CREDENTIALS = {
 const DEFAULT_IMAGES = {
   author:
     "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=400&h=400&fit=crop",
-  cover:
-    "https://images.unsplash.com/photo-1488646953014-85cb44e25828?w=1200&h=800&fit=crop",
+  cover: "/2.jpeg",
 };
 
 // ============================================
@@ -1169,7 +1168,7 @@ const GoogleAuthModal = ({
       setIsLoading(true);
 
       const googleAuthUrl = "https://accounts.google.com/o/oauth2/v2/auth";
-      const redirectUri = window.location.origin + "/auth/callback";
+      const redirectUri = process.env.REACT_APP_GOOGLE_REDIRECT_URI;
 
       const params = {
         client_id: GOOGLE_CLIENT_ID,
