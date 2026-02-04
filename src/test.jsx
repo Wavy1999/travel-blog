@@ -4,8 +4,7 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 // CONFIGURATION
 // ============================================
 const GOOGLE_CLIENT_ID =
-  process.env.REACT_APP_GOOGLE_CLIENT_ID ||
-  "89220882541-r7jkt456a57ve9c3jh46mb6fnoeuq379.apps.googleusercontent.com";
+  process.env.REACT_APP_GOOGLE_CLIENT_ID || "YOUR_GOOGLE_CLIENT_ID";
 const API_URL = process.env.REACT_APP_API_URL || "http://localhost:3001";
 
 // Admin credentials
@@ -398,9 +397,10 @@ const Icons = {
 };
 
 // ============================================
-// DATABASE SERVICE
+// DATABASE SERVICE (Ready for Firebase/MongoDB)
 // ============================================
 const DatabaseService = {
+  // Stories
   async getStories() {
     try {
       const response = await fetch(`${API_URL}/api/stories`);
@@ -422,7 +422,7 @@ const DatabaseService = {
       });
       return await response.json();
     } catch (error) {
-      return story;
+      return story; // Fallback to local
     }
   },
 
@@ -435,6 +435,7 @@ const DatabaseService = {
     }
   },
 
+  // Real-time Likes
   async toggleLike(storyId, userId) {
     try {
       const response = await fetch(`${API_URL}/api/stories/${storyId}/like`, {
@@ -448,6 +449,7 @@ const DatabaseService = {
     }
   },
 
+  // Comments
   async addComment(storyId, comment) {
     try {
       const response = await fetch(
@@ -616,7 +618,11 @@ const UserAvatar = ({ user, size = 32, showName = false, onClick }) => (
     <img
       src={user?.picture || user?.avatar || DEFAULT_IMAGES.author}
       alt={user?.name || "User"}
-      style={{ ...styles.userAvatar, width: size, height: size }}
+      style={{
+        ...styles.userAvatar,
+        width: size,
+        height: size,
+      }}
     />
     {showName && <span style={styles.userAvatarName}>{user?.name}</span>}
   </div>
@@ -784,6 +790,7 @@ const CommentModal = ({
 
   const handleSubmit = async () => {
     if (!comment.trim() || !user) return;
+
     setIsSubmitting(true);
     await onAddComment(comment);
     setComment("");
@@ -811,6 +818,7 @@ const CommentModal = ({
           </button>
         </div>
 
+        {/* Story Preview */}
         <div style={styles.commentModalStoryPreview}>
           <img
             src={story.coverImage || story.images?.[0] || DEFAULT_IMAGES.cover}
@@ -826,6 +834,7 @@ const CommentModal = ({
           </div>
         </div>
 
+        {/* Comments List */}
         <div style={styles.commentModalList}>
           {story?.comments?.length === 0 ? (
             <div style={styles.noCommentsModal}>
@@ -866,6 +875,7 @@ const CommentModal = ({
           )}
         </div>
 
+        {/* Add Comment */}
         <div style={styles.commentModalInput}>
           {user ? (
             <>
@@ -925,14 +935,17 @@ const MultiImageUpload = ({ images, onImagesChange, maxImages = 5 }) => {
   const handleFileSelect = (e) => {
     const files = Array.from(e.target.files);
     const remainingSlots = maxImages - images.length;
+
     files.slice(0, remainingSlots).forEach((file) => {
       if (!file.type.startsWith("image/")) return;
+
       const reader = new FileReader();
       reader.onloadend = () => {
         onImagesChange((prev) => [...prev, reader.result]);
       };
       reader.readAsDataURL(file);
     });
+
     e.target.value = "";
   };
 
@@ -1062,6 +1075,7 @@ const StoryCard = ({
           style={styles.storyImage}
         />
 
+        {/* Image indicators */}
         {images.length > 1 && (
           <div style={styles.imageIndicators}>
             {images.map((_, idx) => (
@@ -1174,113 +1188,24 @@ const StoryCard = ({
 };
 
 // ============================================
-// GOOGLE AUTH MODAL COMPONENT (UPDATED)
+// GOOGLE AUTH MODAL COMPONENT
 // ============================================
-const GoogleAuthModal = ({
-  isOpen,
-  onClose,
-  onLogin,
-  user,
-  toast,
-  onLogout,
-}) => {
+const GoogleAuthModal = ({ isOpen, onClose, onLogin, user }) => {
   const [isLoading, setIsLoading] = useState(false);
 
-  const handleGoogleLogin = () => {
-    try {
-      setIsLoading(true);
-
-      // Create Google OAuth URL
-      const googleAuthUrl = "https://accounts.google.com/o/oauth2/v2/auth";
-      const redirectUri = window.location.origin + "/auth/callback";
-
-      const params = {
-        client_id: GOOGLE_CLIENT_ID,
-        redirect_uri: redirectUri,
-        response_type: "token id_token",
-        scope: "openid profile email",
-        nonce: Math.random().toString(36).substring(2),
-      };
-
-      const url = `${googleAuthUrl}?${new URLSearchParams(params)}`;
-
-      // Open Google login in a popup
-      const popup = window.open(
-        url,
-        "Google Login",
-        "width=500,height=600,top=100,left=100"
-      );
-
-      if (!popup) {
-        toast("Please allow popups to sign in", "error");
-        setIsLoading(false);
-        return;
-      }
-
-      // Check for auth response
-      const checkPopup = setInterval(() => {
-        try {
-          if (popup.closed) {
-            clearInterval(checkPopup);
-            setIsLoading(false);
-            return;
-          }
-
-          const popupUrl = popup.location.href;
-          if (
-            popupUrl.includes("access_token") ||
-            popupUrl.includes("id_token")
-          ) {
-            clearInterval(checkPopup);
-            popup.close();
-
-            const hashParams = new URLSearchParams(popupUrl.split("#")[1]);
-            const idToken = hashParams.get("id_token");
-
-            if (idToken) {
-              const base64Url = idToken.split(".")[1];
-              const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
-              const jsonPayload = decodeURIComponent(
-                atob(base64)
-                  .split("")
-                  .map(function (c) {
-                    return (
-                      "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2)
-                    );
-                  })
-                  .join("")
-              );
-
-              const userInfo = JSON.parse(jsonPayload);
-              const userData = {
-                id: userInfo.sub,
-                name: userInfo.name,
-                email: userInfo.email,
-                picture: userInfo.picture,
-                isAdmin: false,
-              };
-
-              onLogin(userData);
-              onClose();
-            }
-            setIsLoading(false);
-          }
-        } catch (e) {
-          // Cross-origin error, ignore
-        }
-      }, 500);
-    } catch (error) {
-      console.error("Google login error:", error);
-      toast("Failed to sign in with Google", "error");
+  const handleDemoLogin = () => {
+    setIsLoading(true);
+    setTimeout(() => {
+      onLogin({
+        id: "demo-user-" + Date.now(),
+        name: "Demo User",
+        email: "demo@example.com",
+        picture: DEFAULT_IMAGES.author,
+        isAdmin: false,
+      });
       setIsLoading(false);
-    }
-  };
-
-  const handleSignOut = () => {
-    Storage.delete("krissane-user");
-    if (onLogout) onLogout();
-    toast("Signed out successfully");
-    onClose();
+      onClose();
+    }, 500);
   };
 
   if (!isOpen) return null;
@@ -1293,6 +1218,7 @@ const GoogleAuthModal = ({
         </button>
 
         {user ? (
+          // Profile View
           <div style={styles.profileView}>
             <div style={styles.profileHeader}>
               <img
@@ -1302,83 +1228,15 @@ const GoogleAuthModal = ({
               />
               <h3 style={styles.profileName}>{user.name}</h3>
               <p style={styles.profileEmail}>{user.email}</p>
-              {user.isAdmin ? (
+              {user.isAdmin && (
                 <div style={styles.adminBadgeProfile}>
-                  <Icons.Shield /> Admin Account
-                </div>
-              ) : (
-                <div style={styles.memberBadge}>
-                  <Icons.User /> Community Member
+                  <Icons.Shield /> Admin
                 </div>
               )}
             </div>
-
-            <div style={styles.profileStats}>
-              <div style={styles.profileStat}>
-                <Icons.BookOpen />
-                <div>
-                  <div style={styles.statNumber}>{user.storiesPosted || 0}</div>
-                  <div style={styles.statLabel}>Stories Posted</div>
-                </div>
-              </div>
-              <div style={styles.profileStat}>
-                <Icons.Heart />
-                <div>
-                  <div style={styles.statNumber}>{user.storiesLiked || 0}</div>
-                  <div style={styles.statLabel}>Stories Liked</div>
-                </div>
-              </div>
-              <div style={styles.profileStat}>
-                <Icons.MessageCircle />
-                <div>
-                  <div style={styles.statNumber}>
-                    {user.commentsPosted || 0}
-                  </div>
-                  <div style={styles.statLabel}>Comments</div>
-                </div>
-              </div>
-            </div>
-
-            <div style={styles.profileActions}>
-              <button
-                onClick={() => {
-                  onClose();
-                  toast("Profile features coming soon!");
-                }}
-                style={styles.profileBtn}
-              >
-                <Icons.User /> View My Profile
-              </button>
-
-              <button
-                onClick={() => {
-                  onClose();
-                  toast("Write story feature coming soon!");
-                }}
-                style={styles.profileBtn}
-              >
-                <Icons.Plus /> Write New Story
-              </button>
-
-              <button
-                onClick={() => {
-                  onClose();
-                  toast("Bookmarks feature coming soon!");
-                }}
-                style={styles.profileBtn}
-              >
-                <Icons.Bookmark /> My Bookmarks
-              </button>
-            </div>
-
-            <div style={styles.profileFooter}>
-              <button onClick={handleSignOut} style={styles.signOutBtn}>
-                <Icons.LogOut /> Sign Out
-              </button>
-              <p style={styles.accountNote}>Signed in with Google</p>
-            </div>
           </div>
         ) : (
+          // Login View
           <div style={styles.loginView}>
             <div style={styles.authHeader}>
               <h2 style={styles.authTitle}>Join Our Community</h2>
@@ -1389,72 +1247,44 @@ const GoogleAuthModal = ({
 
             <div style={styles.authButtons}>
               <button
-                onClick={handleGoogleLogin}
+                onClick={handleDemoLogin}
                 disabled={isLoading}
-                style={styles.googleBtn}
+                style={styles.demoLoginBtn}
               >
                 {isLoading ? (
                   "Signing in..."
                 ) : (
                   <>
-                    <svg width="18" height="18" viewBox="0 0 24 24">
-                      <path
-                        fill="#4285F4"
-                        d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-                      />
-                      <path
-                        fill="#34A853"
-                        d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-                      />
-                      <path
-                        fill="#FBBC05"
-                        d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
-                      />
-                      <path
-                        fill="#EA4335"
-                        d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
-                      />
-                    </svg>
-                    Sign in with Google
+                    <Icons.User /> Continue as Demo User
                   </>
                 )}
               </button>
 
               <div style={styles.authDivider}>
-                <span style={styles.dividerLine}></span>
-                <span style={styles.dividerText}>or</span>
-                <span style={styles.dividerLine}></span>
+                <span>or</span>
               </div>
 
-              <button
-                onClick={() => {
-                  toast(
-                    "You can continue as a guest, but features are limited",
-                    "info"
-                  );
-                  onClose();
-                }}
-                style={styles.guestBtn}
-              >
-                Continue as Guest
+              <button style={styles.googleBtn}>
+                <svg width="18" height="18" viewBox="0 0 24 24">
+                  <path
+                    fill="#4285F4"
+                    d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                  />
+                  <path
+                    fill="#34A853"
+                    d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                  />
+                  <path
+                    fill="#FBBC05"
+                    d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
+                  />
+                  <path
+                    fill="#EA4335"
+                    d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
+                  />
+                </svg>
+                Sign in with Google
               </button>
-            </div>
-
-            <div style={styles.authBenefits}>
-              <h4 style={styles.benefitsTitle}>
-                What you can do when signed in:
-              </h4>
-              <ul style={styles.benefitsList}>
-                <li style={styles.benefitItem}>✓ Share your travel stories</li>
-                <li style={styles.benefitItem}>✓ Like and comment on posts</li>
-                <li style={styles.benefitItem}>✓ Bookmark favorite stories</li>
-                <li style={styles.benefitItem}>
-                  ✓ Get personalized recommendations
-                </li>
-                <li style={styles.benefitItem}>
-                  ✓ Connect with other travelers
-                </li>
-              </ul>
             </div>
 
             <p style={styles.termsText}>
@@ -1522,10 +1352,12 @@ export default function TravelBlog() {
   useEffect(() => {
     const loadData = async () => {
       setIsLoading(true);
+
       let loadedStories = await DatabaseService.getStories();
       if (!loadedStories) {
         loadedStories = Storage.get("krissane-stories") || sampleStories;
       }
+
       setStories(loadedStories);
       setLikedStories(new Set(Storage.get("krissane-likes") || []));
       setBookmarkedStories(new Set(Storage.get("krissane-bookmarks") || []));
@@ -1533,29 +1365,16 @@ export default function TravelBlog() {
 
       const savedUser = Storage.get("krissane-user");
       if (savedUser) {
-        // Calculate user stats
-        const userWithStats = {
-          ...savedUser,
-          storiesPosted: loadedStories.filter(
-            (s) => s.author.id === savedUser.id
-          ).length,
-          storiesLiked: new Set(Storage.get("krissane-likes") || []).size,
-          commentsPosted: loadedStories.reduce((total, story) => {
-            return (
-              total +
-              (story.comments?.filter((c) => c.userId === savedUser.id)
-                .length || 0)
-            );
-          }, 0),
-        };
-        setUser(userWithStats);
+        setUser(savedUser);
         if (savedUser.isAdmin) setIsAdmin(true);
       }
 
       const savedAdmin = Storage.get("krissane-admin");
       if (savedAdmin) setIsAdmin(true);
+
       setIsLoading(false);
     };
+
     loadData();
   }, []);
 
@@ -1608,21 +1427,9 @@ export default function TravelBlog() {
   // AUTHENTICATION
   // ============================================
   const handleLogin = (userData) => {
-    // Calculate user stats
-    const userWithStats = {
-      ...userData,
-      storiesPosted: stories.filter((s) => s.author.id === userData.id).length,
-      storiesLiked: likedStories.size,
-      commentsPosted: stories.reduce((total, story) => {
-        return (
-          total +
-          (story.comments?.filter((c) => c.userId === userData.id).length || 0)
-        );
-      }, 0),
-    };
-    setUser(userWithStats);
+    setUser(userData);
     if (userData.isAdmin) setIsAdmin(true);
-    Storage.set("krissane-user", userWithStats);
+    Storage.set("krissane-user", userData);
     toast(`Welcome, ${userData.name}! 👋`);
     setShowAuthModal(false);
   };
@@ -1716,6 +1523,7 @@ export default function TravelBlog() {
     await DatabaseService.createStory(story);
     setStories((prev) => [story, ...prev]);
 
+    // Add notification for new story
     addNotification(`New story: "${story.title}" by ${story.author.name}`, {
       avatar: story.author.avatar,
       storyId: story.id,
@@ -1753,6 +1561,8 @@ export default function TravelBlog() {
       }
 
       const isLiked = likedStories.has(storyId);
+
+      // Optimistic update
       setLikedStories((prev) => {
         const newSet = new Set(prev);
         isLiked ? newSet.delete(storyId) : newSet.add(storyId);
@@ -1767,6 +1577,7 @@ export default function TravelBlog() {
         )
       );
 
+      // Update selected story if viewing it
       if (selectedStory?.id === storyId) {
         setSelectedStory((prev) => ({
           ...prev,
@@ -1774,6 +1585,7 @@ export default function TravelBlog() {
         }));
       }
 
+      // Sync with database
       await DatabaseService.toggleLike(storyId, user.id);
 
       if (!isLiked) {
@@ -1819,6 +1631,7 @@ export default function TravelBlog() {
 
   const handleAddComment = async (text) => {
     if (!user || !commentModalStory) return;
+
     const comment = {
       id: Date.now(),
       author: user.name,
@@ -1829,6 +1642,7 @@ export default function TravelBlog() {
     };
 
     await DatabaseService.addComment(commentModalStory.id, comment);
+
     setStories((prev) =>
       prev.map((s) =>
         s.id === commentModalStory.id
@@ -1836,11 +1650,13 @@ export default function TravelBlog() {
           : s
       )
     );
+
     setCommentModalStory((prev) => ({
       ...prev,
       comments: [...(prev.comments || []), comment],
     }));
 
+    // Notification
     if (commentModalStory.author.id !== user.id) {
       addNotification(
         `${user.name} commented on "${commentModalStory.title}"`,
@@ -1850,12 +1666,15 @@ export default function TravelBlog() {
         }
       );
     }
+
     toast("Comment added!");
   };
 
   const handleDeleteComment = async (commentId) => {
     if (!commentModalStory) return;
+
     await DatabaseService.deleteComment(commentModalStory.id, commentId);
+
     setStories((prev) =>
       prev.map((s) =>
         s.id === commentModalStory.id
@@ -1863,10 +1682,12 @@ export default function TravelBlog() {
           : s
       )
     );
+
     setCommentModalStory((prev) => ({
       ...prev,
       comments: prev.comments.filter((c) => c.id !== commentId),
     }));
+
     toast("Comment deleted");
   };
 
@@ -1884,6 +1705,7 @@ export default function TravelBlog() {
 
   return (
     <div style={styles.app}>
+      {/* Toast */}
       {showToast && (
         <div
           style={{
@@ -1896,6 +1718,7 @@ export default function TravelBlog() {
         </div>
       )}
 
+      {/* Comment Modal */}
       <CommentModal
         isOpen={showCommentModal}
         onClose={() => setShowCommentModal(false)}
@@ -1906,6 +1729,7 @@ export default function TravelBlog() {
         isAdmin={isAdmin}
       />
 
+      {/* Image Gallery */}
       {showImageGallery && (
         <ImageCarousel
           images={galleryImages}
@@ -1913,6 +1737,7 @@ export default function TravelBlog() {
         />
       )}
 
+      {/* Delete Confirmation */}
       {showDeleteConfirm && (
         <div
           style={styles.modalOverlay}
@@ -1946,6 +1771,7 @@ export default function TravelBlog() {
         </div>
       )}
 
+      {/* Admin Login Modal */}
       {showAdminLogin && (
         <div
           style={styles.modalOverlay}
@@ -1999,15 +1825,15 @@ export default function TravelBlog() {
         </div>
       )}
 
+      {/* Auth Modal */}
       <GoogleAuthModal
         isOpen={showAuthModal}
         onClose={() => setShowAuthModal(false)}
         onLogin={handleLogin}
-        onLogout={handleLogout}
         user={user}
-        toast={toast}
       />
 
+      {/* Navigation */}
       <nav style={styles.nav}>
         <div style={styles.logo} onClick={() => setCurrentPage("home")}>
           Krissane<span style={styles.logoAccent}>.</span>
@@ -2099,15 +1925,19 @@ export default function TravelBlog() {
         </div>
       </nav>
 
+      {/* Admin Banner */}
       {isAdmin && (
         <div style={styles.adminBanner}>
           <Icons.Shield /> Admin Mode — You can manage all posts and comments
         </div>
       )}
 
+      {/* Main Content */}
       <main style={styles.main}>
+        {/* HOME PAGE */}
         {currentPage === "home" && (
           <>
+            {/* Hero */}
             <section style={styles.hero}>
               <div style={styles.heroContent}>
                 <span style={styles.heroTag}>Travel Stories That Move You</span>
@@ -2154,6 +1984,7 @@ export default function TravelBlog() {
               </div>
             </section>
 
+            {/* Filters */}
             <section style={styles.filterSection}>
               <div style={styles.searchBar}>
                 <Icons.Search />
@@ -2248,6 +2079,7 @@ export default function TravelBlog() {
               </section>
             )}
 
+            {/* Stories Grid */}
             <section style={styles.storiesSection}>
               {filteredStories.length === 0 ? (
                 <div style={styles.emptyState}>
@@ -2289,6 +2121,7 @@ export default function TravelBlog() {
           </>
         )}
 
+        {/* STORY PAGE */}
         {currentPage === "story" && selectedStory && (
           <article style={styles.articlePage}>
             <button
@@ -2327,6 +2160,7 @@ export default function TravelBlog() {
               </div>
             </header>
 
+            {/* Image Gallery */}
             <div
               style={styles.articleImageGallery}
               onClick={() => {
@@ -2357,6 +2191,7 @@ export default function TravelBlog() {
               ))}
             </div>
 
+            {/* Actions */}
             <div style={styles.articleActionsBar}>
               <button
                 onClick={() => handleLike(selectedStory.id)}
@@ -2423,6 +2258,7 @@ export default function TravelBlog() {
           </article>
         )}
 
+        {/* CREATE PAGE */}
         {currentPage === "create" && (
           <div style={styles.createPage}>
             <button
@@ -2516,6 +2352,7 @@ export default function TravelBlog() {
           </div>
         )}
 
+        {/* BOOKMARKS PAGE */}
         {currentPage === "bookmarks" && (
           <div style={styles.bookmarksPage}>
             <button
@@ -2571,6 +2408,7 @@ export default function TravelBlog() {
         )}
       </main>
 
+      {/* Footer */}
       <footer style={styles.footer}>
         <div style={styles.footerContent}>
           <div style={styles.footerBrand}>
@@ -2898,6 +2736,26 @@ const styles = {
     gap: "16px",
     marginBottom: "24px",
   },
+  demoLoginBtn: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "8px",
+    padding: "14px 24px",
+    background: "#2C2C2C",
+    color: "white",
+    border: "none",
+    borderRadius: "8px",
+    fontWeight: 600,
+    cursor: "pointer",
+    fontSize: "1rem",
+  },
+  authDivider: {
+    display: "flex",
+    alignItems: "center",
+    color: "#999",
+    fontSize: "0.85rem",
+  },
   googleBtn: {
     display: "flex",
     alignItems: "center",
@@ -2941,142 +2799,7 @@ const styles = {
     fontWeight: 600,
     marginTop: "12px",
   },
-  memberBadge: {
-    display: "inline-flex",
-    alignItems: "center",
-    gap: "6px",
-    padding: "8px 16px",
-    background: "#8B9A7D",
-    color: "white",
-    borderRadius: "20px",
-    fontSize: "0.85rem",
-    fontWeight: 600,
-    marginTop: "8px",
-  },
-  profileStats: {
-    display: "grid",
-    gridTemplateColumns: "repeat(3, 1fr)",
-    gap: "16px",
-    margin: "24px 0",
-    padding: "20px",
-    background: "#f9f9f9",
-    borderRadius: "12px",
-  },
-  profileStat: {
-    display: "flex",
-    alignItems: "center",
-    gap: "12px",
-  },
-  statNumber: {
-    fontSize: "1.2rem",
-    fontWeight: 700,
-    color: "#C4704F",
-  },
-  statLabel: {
-    fontSize: "0.75rem",
-    color: "#666",
-    textTransform: "uppercase",
-    letterSpacing: "0.05em",
-  },
-  profileActions: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "12px",
-    marginBottom: "24px",
-  },
-  profileBtn: {
-    display: "flex",
-    alignItems: "center",
-    gap: "8px",
-    padding: "12px 16px",
-    background: "#f5f5f5",
-    border: "none",
-    borderRadius: "8px",
-    fontSize: "0.95rem",
-    fontWeight: 500,
-    cursor: "pointer",
-    color: "#2C2C2C",
-    textAlign: "left",
-    transition: "all 0.2s",
-  },
-  profileFooter: {
-    borderTop: "1px solid #eee",
-    paddingTop: "20px",
-    textAlign: "center",
-  },
-  signOutBtn: {
-    display: "flex",
-    alignItems: "center",
-    gap: "8px",
-    padding: "12px 24px",
-    background: "#ffeaea",
-    color: "#e74c3c",
-    border: "none",
-    borderRadius: "8px",
-    fontSize: "0.95rem",
-    fontWeight: 600,
-    cursor: "pointer",
-    marginBottom: "12px",
-    width: "100%",
-    justifyContent: "center",
-  },
-  accountNote: {
-    fontSize: "0.8rem",
-    color: "#888",
-  },
   loginView: {},
-  authDivider: {
-    display: "flex",
-    alignItems: "center",
-    width: "100%",
-    margin: "20px 0",
-  },
-  dividerLine: {
-    flex: 1,
-    height: "1px",
-    background: "#eee",
-  },
-  dividerText: {
-    padding: "0 16px",
-    color: "#999",
-    fontSize: "0.85rem",
-    fontWeight: 500,
-  },
-  guestBtn: {
-    width: "100%",
-    padding: "14px 24px",
-    background: "#2C2C2C",
-    color: "white",
-    border: "none",
-    borderRadius: "8px",
-    fontSize: "0.95rem",
-    fontWeight: 600,
-    cursor: "pointer",
-  },
-  authBenefits: {
-    background: "#f0f7ff",
-    padding: "20px",
-    borderRadius: "12px",
-    margin: "24px 0",
-  },
-  benefitsTitle: {
-    fontSize: "0.9rem",
-    fontWeight: 600,
-    color: "#2C2C2C",
-    marginBottom: "12px",
-  },
-  benefitsList: {
-    listStyle: "none",
-    padding: 0,
-    margin: 0,
-  },
-  benefitItem: {
-    fontSize: "0.85rem",
-    color: "#666",
-    padding: "4px 0",
-    display: "flex",
-    alignItems: "center",
-  },
 
   // Notifications
   notificationContainer: { position: "relative" },
@@ -3157,14 +2880,6 @@ const styles = {
     justifyContent: "center",
   },
   galleryContent: { position: "relative", maxWidth: "90vw", maxHeight: "90vh" },
-  galleryImageContainer: {
-    position: "relative",
-    width: "100%",
-    height: "100%",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-  },
   galleryImage: {
     maxWidth: "100%",
     maxHeight: "85vh",
@@ -4009,8 +3724,6 @@ styleSheet.textContent = `
   button:hover { opacity: 0.9; }
   a:hover { color: #C4704F !important; }
   input:focus, textarea:focus, select:focus { border-color: #C4704F !important; }
-  
-  .benefitsList li:before { content: "✓"; margin-right: 8px; color: #27ae60; font-weight: bold; }
   
   @media (max-width: 768px) {
     nav { padding: 1rem !important; flex-wrap: wrap; gap: 1rem; }
